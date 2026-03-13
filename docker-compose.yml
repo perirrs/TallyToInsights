@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    container_name: tally_backend
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/uploads
+      - db_data:/app/data
+    environment:
+      - DATABASE_URL=sqlite:////app/data/tallyinsights.db
+      - UPLOAD_DIR=/app/uploads
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: tally_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  uploads_data:
+  db_data:
