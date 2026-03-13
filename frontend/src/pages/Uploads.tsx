@@ -33,8 +33,8 @@ export default function UploadsPage() {
   const { data: dumps = [], isLoading } = useQuery<Dump[]>({
     queryKey: ['dumps', companyId],
     queryFn: () => api.get(`/uploads/${companyId}`).then((r) => r.data),
-    refetchInterval: (data) => {
-      const d = data as Dump[] | undefined
+    refetchInterval: (query) => {
+      const d = query.state.data
       if (d?.some((d) => d.status === 'processing' || d.status === 'uploaded')) return 3000
       return false
     },
