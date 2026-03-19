@@ -8,8 +8,8 @@ import os
 
 router = APIRouter(prefix="/api/audit-checks", tags=["audit-checks"])
 
-CHECKS_FILE = os.path.join(os.path.dirname(__file__), "../../../data/checks_735.json")
-OVERRIDES_FILE = os.path.join(os.path.dirname(__file__), "../../../data/check_overrides.json")
+CHECKS_FILE = os.path.join(os.path.dirname(__file__), "../../data/checks_735.json")
+OVERRIDES_FILE = os.path.join(os.path.dirname(__file__), "../../data/check_overrides.json")
 
 
 def load_checks():
