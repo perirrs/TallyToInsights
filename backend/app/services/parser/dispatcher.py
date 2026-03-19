@@ -13,6 +13,21 @@ from app.services.parser.normalize import ParseResult, NLedger, NVoucher, NStock
 from app.database import SessionLocal
 
 
+def _set_progress(dump_id: int, pct: int, stage: str):
+    """Lightweight progress update — own session so it's visible to pollers immediately."""
+    db2 = SessionLocal()
+    try:
+        db2.execute(
+            text("UPDATE data_dumps SET progress_pct=:p, progress_stage=:s WHERE id=:id"),
+            {"p": pct, "s": stage, "id": dump_id},
+        )
+        db2.commit()
+    except Exception:
+        pass
+    finally:
+        db2.close()
+
+
 def parse_dump(dump_id: int):
     """Entry point called by background task."""
     db = SessionLocal()
@@ -21,15 +36,25 @@ def parse_dump(dump_id: int):
         if not dump:
             return
         dump.status = "processing"
+        dump.progress_pct = 5
+        dump.progress_stage = "Starting…"
         db.commit()
 
+        _set_progress(dump_id, 15, "Reading & parsing file…")
         result = _parse_file(dump.file_path, dump.file_format)
+
+        n_v = len(result.vouchers)
+        n_l = len(result.ledgers)
+        _set_progress(dump_id, 42, f"Parsed {n_l:,} ledgers, {n_v:,} vouchers — saving to DB…")
         _persist(result, dump, db)
 
+        _set_progress(dump_id, 88, "Finalising & indexing…")
         dump.status = "processed"
         dump.processed_at = datetime.utcnow()
-        dump.voucher_count = len(result.vouchers)
-        dump.ledger_count = len(result.ledgers)
+        dump.voucher_count = n_v
+        dump.ledger_count = n_l
+        dump.progress_pct = 100
+        dump.progress_stage = f"Done — {n_l:,} ledgers, {n_v:,} vouchers"
         if result.period_from and not dump.period_from:
             dump.period_from = result.period_from
         if result.period_to and not dump.period_to:
@@ -43,6 +68,8 @@ def parse_dump(dump_id: int):
             if dump2:
                 dump2.status = "failed"
                 dump2.error_message = str(e)[:1000]
+                dump2.progress_pct = 0
+                dump2.progress_stage = f"Failed: {str(e)[:100]}"
                 db.commit()
         except Exception:
             pass

@@ -1,15 +1,42 @@
+/**
+ * Vouchers Register
+ * ──────────────────
+ * Full paginated voucher list with filters + click-to-full-detail.
+ * Drill-down:  List → VoucherModal (Dr/Cr lines, narration, GST, audit trail)
+ */
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ChevronLeft } from 'lucide-react'
+import { ChevronLeft, Search, RotateCcw, FileText } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import api from '../../api/client'
 import PageHeader from '../../components/UI/PageHeader'
+import VoucherModal from '../../components/VoucherModal'
 
-const INR = (v: number) => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(v)
+const INR = (v: number) =>
+  new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(v)
+
+const TYPE_COLORS: Record<string, string> = {
+  Sales:          'bg-green-100 text-green-800',
+  Purchase:       'bg-orange-100 text-orange-800',
+  Receipt:        'bg-blue-100 text-blue-800',
+  Payment:        'bg-red-100 text-red-800',
+  Journal:        'bg-purple-100 text-purple-800',
+  Contra:         'bg-gray-100 text-gray-700',
+  'Debit Note':   'bg-orange-100 text-orange-800',
+  'Credit Note':  'bg-green-100 text-green-800',
+}
+
+function typeChip(vtype: string) {
+  const cls = Object.entries(TYPE_COLORS).find(([k]) =>
+    vtype.toLowerCase().includes(k.toLowerCase())
+  )?.[1] ?? 'bg-gray-100 text-gray-700'
+  return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${cls}`}>{vtype}</span>
+}
 
 export default function VouchersPage() {
   const { dumpId } = useParams<{ dumpId: string }>()
   const navigate = useNavigate()
+
   const [page, setPage] = useState(1)
   const [vtype, setVtype] = useState('')
   const [party, setParty] = useState('')
@@ -17,46 +44,57 @@ export default function VouchersPage() {
   const [maxAmt, setMaxAmt] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [selectedId, setSelectedId] = useState<number | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['vouchers', dumpId, page, vtype, party, minAmt, maxAmt, dateFrom, dateTo],
-    queryFn: () => api.get(`/reports/${dumpId}/vouchers`, {
-      params: {
-        page,
-        voucher_type: vtype || undefined,
-        party: party || undefined,
-        min_amount: minAmt || undefined,
-        max_amount: maxAmt || undefined,
-        date_from: dateFrom || undefined,
-        date_to: dateTo || undefined,
-      }
-    }).then((r) => r.data),
+    queryFn: () =>
+      api.get(`/reports/${dumpId}/vouchers`, {
+        params: {
+          page,
+          voucher_type:  vtype    || undefined,
+          party:         party    || undefined,
+          min_amount:    minAmt   || undefined,
+          max_amount:    maxAmt   || undefined,
+          date_from:     dateFrom || undefined,
+          date_to:       dateTo   || undefined,
+        },
+      }).then((r) => r.data),
+    keepPreviousData: true,
   })
 
   const resetFilters = () => {
-    setVtype(''); setParty(''); setMinAmt(''); setMaxAmt(''); setDateFrom(''); setDateTo(''); setPage(1)
+    setVtype(''); setParty(''); setMinAmt(''); setMaxAmt('')
+    setDateFrom(''); setDateTo(''); setPage(1)
   }
-
   const hasFilters = vtype || party || minAmt || maxAmt || dateFrom || dateTo
+  const totalPages = data ? Math.ceil(data.total / data.page_size) : 1
 
   return (
     <div className="p-6">
-      <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4">
+      <button onClick={() => navigate(-1)}
+        className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4">
         <ChevronLeft size={16} /> Back
       </button>
-      <PageHeader title="Vouchers" subtitle="Transaction drill-down with filters" />
+      <PageHeader
+        title="Vouchers Register"
+        subtitle="Full transaction log — click any row for Dr/Cr lines and audit trail"
+      />
 
+      {/* Filters */}
       <div className="card mb-4 py-3">
         <div className="flex flex-wrap gap-3 items-end">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Voucher Type</label>
             <input value={vtype} onChange={(e) => { setVtype(e.target.value); setPage(1) }}
-              placeholder="e.g. Sales" className="border rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none w-36" />
+              placeholder="e.g. Sales"
+              className="border rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none w-36" />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Party / Ledger</label>
             <input value={party} onChange={(e) => { setParty(e.target.value); setPage(1) }}
-              placeholder="Party name..." className="border rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none w-44" />
+              placeholder="Party name…"
+              className="border rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none w-44" />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Date From</label>
@@ -71,43 +109,84 @@ export default function VouchersPage() {
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Min Amount</label>
             <input value={minAmt} onChange={(e) => { setMinAmt(e.target.value); setPage(1) }}
-              placeholder="0" type="number" className="border rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none w-28" />
+              placeholder="0" type="number"
+              className="border rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none w-28" />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Max Amount</label>
             <input value={maxAmt} onChange={(e) => { setMaxAmt(e.target.value); setPage(1) }}
-              placeholder="Any" type="number" className="border rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none w-28" />
+              placeholder="Any" type="number"
+              className="border rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none w-28" />
           </div>
           {hasFilters && (
-            <button onClick={resetFilters} className="text-xs text-gray-500 hover:text-gray-700 underline self-end pb-1.5">
-              Clear filters
+            <button onClick={resetFilters}
+              className="text-xs text-gray-400 hover:text-gray-600 underline self-end pb-1.5 flex items-center gap-1">
+              <RotateCcw size={11} /> Clear
             </button>
           )}
-          {data && <span className="text-xs text-gray-500 self-end pb-1.5">{data.total?.toLocaleString()} vouchers</span>}
+          {data && (
+            <span className="text-xs text-gray-500 self-end pb-1.5">
+              {data.total?.toLocaleString()} vouchers
+            </span>
+          )}
         </div>
       </div>
 
+      {/* Table */}
       <div className="bg-white rounded-xl border overflow-hidden">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-gray-50 border-b">
-              {['Voucher No', 'Type', 'Date', 'Party', 'Narration', 'Amount', 'Posted By'].map(h => (
-                <th key={h} className="px-3 py-2.5 text-left font-semibold text-gray-600">{h}</th>
-              ))}
+              <th className="px-3 py-2.5 text-left font-semibold text-gray-600">Date</th>
+              <th className="px-3 py-2.5 text-left font-semibold text-gray-600">Type</th>
+              <th className="px-3 py-2.5 text-left font-semibold text-gray-600">Voucher No</th>
+              <th className="px-3 py-2.5 text-left font-semibold text-gray-600">Party</th>
+              <th className="px-3 py-2.5 text-left font-semibold text-gray-600">Narration</th>
+              <th className="px-3 py-2.5 text-right font-semibold text-gray-600">Amount</th>
+              <th className="px-3 py-2.5 text-left font-semibold text-gray-600">Posted By</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-gray-50">
             {isLoading ? (
-              <tr><td colSpan={7} className="text-center py-8 text-gray-400">Loading...</td></tr>
+              Array.from({ length: 10 }).map((_, i) => (
+                <tr key={i}>
+                  {Array.from({ length: 7 }).map((_, j) => (
+                    <td key={j} className="px-3 py-2.5">
+                      <div className="h-3.5 bg-gray-100 animate-pulse rounded" />
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : data?.items?.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="text-center py-12 text-gray-400">
+                  <FileText size={32} className="mx-auto mb-2 opacity-40" />
+                  No vouchers match the current filters
+                </td>
+              </tr>
             ) : (
               data?.items?.map((v: any) => (
-                <tr key={v.id} className="hover:bg-gray-50">
-                  <td className="px-3 py-2 font-mono text-gray-600">{v.voucher_number || '—'}</td>
-                  <td className="px-3 py-2 text-gray-700">{v.voucher_type}</td>
-                  <td className="px-3 py-2 text-gray-600">{v.date}</td>
-                  <td className="px-3 py-2 max-w-[150px] truncate text-gray-800">{v.party_ledger || '—'}</td>
-                  <td className="px-3 py-2 max-w-[200px] truncate text-gray-500">{v.narration || '—'}</td>
-                  <td className="px-3 py-2 text-right font-medium text-gray-900">₹{INR(v.amount)}</td>
+                <tr
+                  key={v.id}
+                  className={`cursor-pointer transition-colors group ${
+                    v.is_cancelled ? 'opacity-50' : 'hover:bg-blue-50'
+                  }`}
+                  onClick={() => setSelectedId(v.id)}
+                >
+                  <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{v.date}</td>
+                  <td className="px-3 py-2">{typeChip(v.voucher_type)}</td>
+                  <td className="px-3 py-2 font-mono text-gray-500">{v.voucher_number || '—'}</td>
+                  <td className="px-3 py-2 max-w-[150px] truncate text-gray-800">
+                    {v.party_ledger || <span className="text-gray-400">—</span>}
+                  </td>
+                  <td className="px-3 py-2 max-w-[200px] truncate text-gray-500">
+                    {v.narration || <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className={`px-3 py-2 text-right font-semibold ${
+                    v.is_cancelled ? 'line-through text-gray-400' : 'text-gray-900'
+                  }`}>
+                    ₹{INR(v.amount)}
+                  </td>
                   <td className="px-3 py-2 text-gray-500">{v.posted_by || '—'}</td>
                 </tr>
               ))
@@ -116,12 +195,24 @@ export default function VouchersPage() {
         </table>
       </div>
 
-      {data && (
+      {/* Pagination */}
+      {data && totalPages > 1 && (
         <div className="flex items-center justify-between mt-4 text-sm text-gray-600">
-          <button disabled={page <= 1} onClick={() => setPage(p => p - 1)} className="btn-secondary text-xs disabled:opacity-40">← Prev</button>
-          <span>Page {page} of {Math.ceil(data.total / data.page_size)}</span>
-          <button disabled={page >= Math.ceil(data.total / data.page_size)} onClick={() => setPage(p => p + 1)} className="btn-secondary text-xs disabled:opacity-40">Next →</button>
+          <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)}
+            className="btn-secondary text-xs disabled:opacity-40">← Prev</button>
+          <span>Page {page} of {totalPages} · {data.total?.toLocaleString()} total</span>
+          <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}
+            className="btn-secondary text-xs disabled:opacity-40">Next →</button>
         </div>
+      )}
+
+      {/* Voucher detail modal */}
+      {selectedId && (
+        <VoucherModal
+          dumpId={dumpId!}
+          voucherId={selectedId}
+          onClose={() => setSelectedId(null)}
+        />
       )}
     </div>
   )

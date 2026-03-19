@@ -19,6 +19,8 @@ interface Dump {
   ledger_count: number
   uploaded_at: string
   processed_at: string | null
+  progress_pct: number
+  progress_stage: string | null
 }
 
 export default function UploadsPage() {
@@ -37,7 +39,7 @@ export default function UploadsPage() {
     queryFn: () => api.get(`/uploads/${companyId}`).then((r) => r.data),
     refetchInterval: (query) => {
       const d = query.state.data
-      if (d?.some((d) => ['processing', 'uploaded', 'auditing'].includes(d.status))) return 3000
+      if (d?.some((d) => ['processing', 'uploaded', 'auditing'].includes(d.status))) return 1500
       return false
     },
   })
@@ -204,11 +206,33 @@ export default function UploadsPage() {
                         <BarChart3 size={12} /> View Reports
                       </button>
                     )}
-                    {dump.status === 'processing' && <span className="text-xs text-blue-600 font-medium">Processing...</span>}
+                    {dump.status === 'processing' && (
+                      <div className="text-right min-w-[160px]">
+                        <p className="text-xs text-blue-600 font-medium mb-1 flex items-center gap-1 justify-end">
+                          <Loader size={11} className="animate-spin" />
+                          {dump.progress_pct}% — {dump.progress_stage || 'Processing…'}
+                        </p>
+                        <div className="h-1.5 bg-blue-100 rounded-full overflow-hidden w-40">
+                          <div
+                            className="h-full bg-blue-500 rounded-full transition-all duration-700"
+                            style={{ width: `${dump.progress_pct || 5}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
                     {dump.status === 'auditing' && (
-                      <span className="text-xs text-purple-600 font-medium flex items-center gap-1">
-                        <Loader size={11} className="animate-spin" /> Rechecking...
-                      </span>
+                      <div className="text-right min-w-[160px]">
+                        <p className="text-xs text-purple-600 font-medium mb-1 flex items-center gap-1 justify-end">
+                          <Loader size={11} className="animate-spin" />
+                          {dump.progress_pct}% — {dump.progress_stage || 'Running audit checks…'}
+                        </p>
+                        <div className="h-1.5 bg-purple-100 rounded-full overflow-hidden w-40">
+                          <div
+                            className="h-full bg-purple-500 rounded-full transition-all duration-700"
+                            style={{ width: `${dump.progress_pct || 5}%` }}
+                          />
+                        </div>
+                      </div>
                     )}
                     {dump.status === 'failed' && <span className="text-xs text-red-600 font-medium">Failed</span>}
                     {['processed', 'failed'].includes(dump.status) && (

@@ -15,6 +15,8 @@ class DumpOut(BaseModel):
     ledger_count: int
     uploaded_at: datetime
     processed_at: datetime | None
+    progress_pct: int = 0
+    progress_stage: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -26,5 +28,7 @@ class DumpStatus(BaseModel):
     ledger_count: int
     error_message: str | None
     processed_at: datetime | None
+    progress_pct: int = 0
+    progress_stage: str | None = None
 
     model_config = {"from_attributes": True}
