@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from app.database import get_db
 from app.models.user import User
 from app.models.company import Company
@@ -98,7 +99,26 @@ def delete_dump(dump_id: int, db: Session = Depends(get_db), user: User = Depend
     company = db.query(Company).filter(Company.id == dump.company_id).first()
     if not user.is_admin and company not in user.companies:
         raise HTTPException(403, "Access denied")
-    if os.path.exists(dump.file_path):
-        os.remove(dump.file_path)
-    db.delete(dump)
+
+    # Remove uploaded file
+    try:
+        if dump.file_path and os.path.exists(dump.file_path):
+            os.remove(dump.file_path)
+    except OSError:
+        pass
+
+    # Bulk-delete child rows directly (ORM cascade is too slow for large datasets)
+    db.execute(text(
+        "DELETE FROM voucher_lines WHERE voucher_id IN "
+        "(SELECT id FROM vouchers WHERE dump_id = :did)"
+    ), {"did": dump_id})
+    db.execute(text(
+        "DELETE FROM stock_voucher_lines WHERE voucher_id IN "
+        "(SELECT id FROM vouchers WHERE dump_id = :did)"
+    ), {"did": dump_id})
+    db.execute(text("DELETE FROM vouchers WHERE dump_id = :did"), {"did": dump_id})
+    db.execute(text("DELETE FROM ledgers WHERE dump_id = :did"), {"did": dump_id})
+    db.execute(text("DELETE FROM stock_items WHERE dump_id = :did"), {"did": dump_id})
+    db.execute(text("DELETE FROM audit_results WHERE dump_id = :did"), {"did": dump_id})
+    db.execute(text("DELETE FROM data_dumps WHERE id = :did"), {"did": dump_id})
     db.commit()

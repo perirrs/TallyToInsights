@@ -40,10 +40,17 @@ export default function UploadsPage() {
     },
   })
 
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+
   const deleteDump = useMutation({
     mutationFn: (dumpId: number) => api.delete(`/uploads/${dumpId}`),
     onSuccess: () => {
+      setDeletingId(null)
       qc.invalidateQueries({ queryKey: ['dumps', companyId] })
+    },
+    onError: (err: any) => {
+      setDeletingId(null)
+      alert(`Delete failed: ${err?.response?.data?.detail || err.message || 'Unknown error'}`)
     },
   })
 
@@ -85,7 +92,8 @@ export default function UploadsPage() {
   }
 
   const handleDeleteDump = (dump: Dump) => {
-    if (window.confirm(`Delete "${dump.filename}"? This cannot be undone.`)) {
+    if (window.confirm(`Delete "${dump.filename}"? This will remove all vouchers, ledgers and audit results. This cannot be undone.`)) {
+      setDeletingId(dump.id)
       deleteDump.mutate(dump.id)
     }
   }
@@ -196,10 +204,13 @@ export default function UploadsPage() {
                   )}
                   <button
                     onClick={() => handleDeleteDump(dump)}
+                    disabled={deletingId === dump.id}
                     title="Delete dump"
-                    className="p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                    className="p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
                   >
-                    <Trash2 size={14} />
+                    {deletingId === dump.id
+                      ? <Loader size={14} className="animate-spin text-red-500" />
+                      : <Trash2 size={14} />}
                   </button>
                 </div>
               </div>

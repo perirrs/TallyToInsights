@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 import PageHeader from '../components/UI/PageHeader'
-import { Building2, Plus, Upload, ChevronRight, Trash2, Pencil } from 'lucide-react'
+import { Building2, Plus, Upload, ChevronRight, Trash2, Pencil, Loader } from 'lucide-react'
 
 interface Company {
   id: number
@@ -52,10 +52,17 @@ export default function CompaniesPage() {
     },
   })
 
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+
   const remove = useMutation({
     mutationFn: (id: number) => api.delete(`/companies/${id}`),
     onSuccess: () => {
+      setDeletingId(null)
       qc.invalidateQueries({ queryKey: ['companies'] })
+    },
+    onError: (err: any) => {
+      setDeletingId(null)
+      alert(`Delete failed: ${err?.response?.data?.detail || err.message || 'Unknown error'}`)
     },
   })
 
@@ -85,7 +92,8 @@ export default function CompaniesPage() {
 
   const handleDelete = (c: Company, e: React.MouseEvent) => {
     e.stopPropagation()
-    if (window.confirm(`Delete company "${c.name}"? This cannot be undone.`)) {
+    if (window.confirm(`Delete company "${c.name}"? All uploaded data dumps, vouchers and audit results will be permanently removed.`)) {
+      setDeletingId(c.id)
       remove.mutate(c.id)
     }
   }
@@ -211,10 +219,13 @@ export default function CompaniesPage() {
                 </button>
                 <button
                   onClick={(e) => handleDelete(c, e)}
+                  disabled={deletingId === c.id}
                   title="Delete company"
-                  className="p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                  className="p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
                 >
-                  <Trash2 size={14} />
+                  {deletingId === c.id
+                    ? <Loader size={14} className="animate-spin text-red-500" />
+                    : <Trash2 size={14} />}
                 </button>
               </div>
 

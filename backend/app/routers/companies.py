@@ -1,5 +1,7 @@
+import os
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from app.database import get_db
 from app.models.user import User
 from app.models.company import Company
@@ -57,7 +59,32 @@ def delete_company(company_id: int, db: Session = Depends(get_db), user: User = 
         raise HTTPException(status_code=404, detail="Company not found")
     if not user.is_admin and company not in user.companies:
         raise HTTPException(status_code=403, detail="Access denied")
-    db.delete(company)
+
+    # Get all dump IDs for this company first
+    dump_ids = [row[0] for row in db.execute(
+        text("SELECT id FROM data_dumps WHERE company_id = :cid"), {"cid": company_id}
+    ).fetchall()]
+
+    for did in dump_ids:
+        # Remove uploaded files
+        row = db.execute(text("SELECT file_path FROM data_dumps WHERE id = :did"), {"did": did}).fetchone()
+        if row and row[0]:
+            try:
+                if os.path.exists(row[0]):
+                    os.remove(row[0])
+            except OSError:
+                pass
+        # Bulk-delete child rows
+        db.execute(text("DELETE FROM voucher_lines WHERE voucher_id IN (SELECT id FROM vouchers WHERE dump_id = :did)"), {"did": did})
+        db.execute(text("DELETE FROM stock_voucher_lines WHERE voucher_id IN (SELECT id FROM vouchers WHERE dump_id = :did)"), {"did": did})
+        db.execute(text("DELETE FROM vouchers WHERE dump_id = :did"), {"did": did})
+        db.execute(text("DELETE FROM ledgers WHERE dump_id = :did"), {"did": did})
+        db.execute(text("DELETE FROM stock_items WHERE dump_id = :did"), {"did": did})
+        db.execute(text("DELETE FROM audit_results WHERE dump_id = :did"), {"did": did})
+
+    db.execute(text("DELETE FROM data_dumps WHERE company_id = :cid"), {"cid": company_id})
+    db.execute(text("DELETE FROM user_companies WHERE company_id = :cid"), {"cid": company_id})
+    db.execute(text("DELETE FROM companies WHERE id = :cid"), {"cid": company_id})
     db.commit()
 
 
