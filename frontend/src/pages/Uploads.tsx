@@ -1,10 +1,10 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useDropzone } from 'react-dropzone'
 import api from '../api/client'
 import PageHeader from '../components/UI/PageHeader'
-import { Upload, FileText, CheckCircle, XCircle, Loader, BarChart3, RefreshCw, Trash2, ChevronLeft, RotateCcw, ListChecks, X, ChevronDown, ChevronRight as ChevronRightIcon, Square, CheckSquare, MinusSquare } from 'lucide-react'
+import { Upload, FileText, CheckCircle, XCircle, Loader, BarChart3, RefreshCw, Trash2, ChevronLeft, RotateCcw } from 'lucide-react'
 import clsx from 'clsx'
 
 interface Dump {
@@ -21,13 +21,6 @@ interface Dump {
   processed_at: string | null
 }
 
-interface AuditCheck {
-  id: number
-  desc: string
-  category: string
-  risk: string
-}
-
 export default function UploadsPage() {
   const { companyId } = useParams<{ companyId: string }>()
   const navigate = useNavigate()
@@ -36,11 +29,8 @@ export default function UploadsPage() {
   const [periodTo, setPeriodTo] = useState('')
   const [financialYear, setFinancialYear] = useState('')
   const [uploading, setUploading] = useState(false)
-
-  // Checks panel state
-  const [showChecksPanel, setShowChecksPanel] = useState(false)
-  const [selectedCheckIds, setSelectedCheckIds] = useState<Set<number> | null>(null) // null = all
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [recheckingAll, setRecheckingAll] = useState(false)
 
   const { data: dumps = [], isLoading } = useQuery<Dump[]>({
     queryKey: ['dumps', companyId],
@@ -52,90 +42,14 @@ export default function UploadsPage() {
     },
   })
 
-  // Load all checks for the panel (fetched once when panel opens)
-  const { data: allChecksData } = useQuery({
-    queryKey: ['all-checks-for-panel'],
-    queryFn: () => api.get('/audit-checks/', { params: { page: 1, page_size: 9999 } }).then((r) => r.data),
-    enabled: showChecksPanel,
-    staleTime: 60_000,
-  })
-  const allChecks: AuditCheck[] = allChecksData?.items || []
-
-  // Group checks by category
-  const checksByCategory = useMemo(() => {
-    const map: Record<string, AuditCheck[]> = {}
-    for (const c of allChecks) {
-      const cat = c.category || 'Uncategorized'
-      if (!map[cat]) map[cat] = []
-      map[cat].push(c)
-    }
-    return map
-  }, [allChecks])
-
-  const allCheckIds = useMemo(() => allChecks.map((c) => c.id), [allChecks])
-
-  // Effective selection: null means all selected, set means specific ones
-  const effectiveSelected = selectedCheckIds ?? new Set(allCheckIds)
-
-  const isAllSelected = selectedCheckIds === null || selectedCheckIds.size === allCheckIds.length
-  const selectedCount = selectedCheckIds === null ? allCheckIds.length : selectedCheckIds.size
-
-  const toggleSelectAll = () => {
-    if (isAllSelected) {
-      setSelectedCheckIds(new Set()) // deselect all
-    } else {
-      setSelectedCheckIds(null) // select all
-    }
-  }
-
-  const toggleCategory = (cat: string) => {
-    const catIds = (checksByCategory[cat] || []).map((c) => c.id)
-    const allCatSelected = catIds.every((id) => effectiveSelected.has(id))
-    const next = new Set(effectiveSelected)
-    if (allCatSelected) {
-      catIds.forEach((id) => next.delete(id))
-    } else {
-      catIds.forEach((id) => next.add(id))
-    }
-    setSelectedCheckIds(next.size === allCheckIds.length ? null : next)
-  }
-
-  const toggleCheck = (id: number) => {
-    const next = new Set(effectiveSelected)
-    next.has(id) ? next.delete(id) : next.add(id)
-    setSelectedCheckIds(next.size === allCheckIds.length ? null : next)
-  }
-
-  const toggleCategoryExpand = (cat: string) => {
-    setExpandedCategories((prev) => {
-      const s = new Set(prev)
-      s.has(cat) ? s.delete(cat) : s.add(cat)
-      return s
-    })
-  }
-
-  const getCategoryState = (cat: string): 'all' | 'some' | 'none' => {
-    const catIds = (checksByCategory[cat] || []).map((c) => c.id)
-    const selCount = catIds.filter((id) => effectiveSelected.has(id)).length
-    if (selCount === 0) return 'none'
-    if (selCount === catIds.length) return 'all'
-    return 'some'
-  }
-
-  const [deletingId, setDeletingId] = useState<number | null>(null)
-  const [recheckingAll, setRecheckingAll] = useState(false)
-
   const deleteDump = useMutation({
     mutationFn: (dumpId: number) => api.delete(`/uploads/${dumpId}`),
     onSuccess: () => { setDeletingId(null); qc.invalidateQueries({ queryKey: ['dumps', companyId] }) },
     onError: (err: any) => { setDeletingId(null); alert(`Delete failed: ${err?.response?.data?.detail || err.message || 'Unknown error'}`) },
   })
 
-  const buildRecheckBody = () =>
-    selectedCheckIds === null ? {} : { check_ids: Array.from(selectedCheckIds) }
-
   const recheckDump = useMutation({
-    mutationFn: (dumpId: number) => api.post(`/audit/${dumpId}/rerun`, buildRecheckBody()),
+    mutationFn: (dumpId: number) => api.post(`/audit/${dumpId}/rerun`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dumps', companyId] }),
     onError: (err: any) => { alert(`Recheck failed: ${err?.response?.data?.detail || err.message || 'Unknown error'}`) },
   })
@@ -145,7 +59,7 @@ export default function UploadsPage() {
     if (recheckable.length === 0) return
     setRecheckingAll(true)
     try {
-      await Promise.all(recheckable.map((d) => api.post(`/audit/${d.id}/rerun`, buildRecheckBody())))
+      await Promise.all(recheckable.map((d) => api.post(`/audit/${d.id}/rerun`)))
       qc.invalidateQueries({ queryKey: ['dumps', companyId] })
     } catch (err: any) {
       alert(`Recheck all failed: ${err?.response?.data?.detail || err.message || 'Unknown error'}`)
@@ -251,36 +165,18 @@ export default function UploadsPage() {
         <>
           <div className="flex items-center justify-between mb-3">
             <p className="text-sm text-gray-500">{dumps.length} dump{dumps.length !== 1 ? 's' : ''}</p>
-            <div className="flex items-center gap-2">
-              {/* Checks configuration button */}
+            {dumps.some((d) => ['processed', 'failed'].includes(d.status)) && (
               <button
-                onClick={() => setShowChecksPanel(true)}
-                className={clsx(
-                  'flex items-center gap-1.5 text-xs font-medium border rounded-lg px-3 py-1.5 transition-colors',
-                  selectedCheckIds !== null
-                    ? 'text-orange-600 border-orange-300 bg-orange-50 hover:border-orange-400'
-                    : 'text-gray-600 border-gray-200 hover:border-gray-400 hover:text-gray-800'
-                )}
+                onClick={handleRecheckAll}
+                disabled={recheckingAll || dumps.some((d) => d.status === 'auditing')}
+                className="flex items-center gap-1.5 text-xs font-medium text-purple-600 hover:text-purple-800 border border-purple-200 hover:border-purple-400 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-50"
               >
-                <ListChecks size={12} />
-                {selectedCheckIds !== null
-                  ? `${selectedCheckIds.size} of ${allCheckIds.length} checks`
-                  : `All ${allCheckIds.length || ''} checks`}
+                {recheckingAll || dumps.some((d) => d.status === 'auditing')
+                  ? <Loader size={12} className="animate-spin" />
+                  : <RotateCcw size={12} />}
+                Recheck All
               </button>
-
-              {dumps.some((d) => ['processed', 'failed'].includes(d.status)) && (
-                <button
-                  onClick={handleRecheckAll}
-                  disabled={recheckingAll || dumps.some((d) => d.status === 'auditing')}
-                  className="flex items-center gap-1.5 text-xs font-medium text-purple-600 hover:text-purple-800 border border-purple-200 hover:border-purple-400 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-50"
-                >
-                  {recheckingAll || dumps.some((d) => d.status === 'auditing')
-                    ? <Loader size={12} className="animate-spin" />
-                    : <RotateCcw size={12} />}
-                  Recheck All
-                </button>
-              )}
-            </div>
+            )}
           </div>
 
           <div className="space-y-3">
@@ -319,7 +215,7 @@ export default function UploadsPage() {
                       <button
                         onClick={() => recheckDump.mutate(dump.id)}
                         disabled={recheckDump.isPending}
-                        title={selectedCheckIds !== null ? `Recheck ${selectedCheckIds.size} selected checks` : 'Recheck all checks'}
+                        title="Recheck with all checks (use report view for selective recheck)"
                         className="p-1.5 rounded-md text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition-colors disabled:opacity-50"
                       >
                         <RotateCcw size={14} />
@@ -339,121 +235,6 @@ export default function UploadsPage() {
             ))}
           </div>
         </>
-      )}
-
-      {/* Checks slide-over panel */}
-      {showChecksPanel && (
-        <div className="fixed inset-0 z-50 flex">
-          {/* Backdrop */}
-          <div className="flex-1 bg-black/30" onClick={() => setShowChecksPanel(false)} />
-
-          {/* Panel */}
-          <div className="w-96 bg-white shadow-2xl flex flex-col h-full">
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
-              <div>
-                <h3 className="font-semibold text-gray-900 text-sm">Configure Checks</h3>
-                <p className="text-xs text-gray-500 mt-0.5">{selectedCount} of {allCheckIds.length} checks selected</p>
-              </div>
-              <button onClick={() => setShowChecksPanel(false)} className="p-1 rounded hover:bg-gray-200 text-gray-500">
-                <X size={16} />
-              </button>
-            </div>
-
-            {/* Select All / Deselect All */}
-            <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-white">
-              <button
-                onClick={toggleSelectAll}
-                className="flex items-center gap-1.5 text-xs font-medium text-brand-600 hover:text-brand-800"
-              >
-                {isAllSelected ? <CheckSquare size={13} className="text-brand-600" /> : <Square size={13} className="text-gray-400" />}
-                {isAllSelected ? 'Deselect All' : 'Select All'}
-              </button>
-              {selectedCheckIds !== null && selectedCheckIds.size === 0 && (
-                <span className="text-xs text-orange-500 ml-auto">No checks selected — recheck will be skipped</span>
-              )}
-            </div>
-
-            {/* Categories + checks */}
-            <div className="flex-1 overflow-y-auto">
-              {allChecks.length === 0 ? (
-                <div className="flex items-center justify-center h-32 text-gray-400 text-sm">
-                  <Loader size={16} className="animate-spin mr-2" /> Loading checks...
-                </div>
-              ) : (
-                Object.entries(checksByCategory).sort(([a], [b]) => a.localeCompare(b)).map(([cat, checks]) => {
-                  const state = getCategoryState(cat)
-                  const expanded = expandedCategories.has(cat)
-                  return (
-                    <div key={cat} className="border-b last:border-b-0">
-                      {/* Category row */}
-                      <div className="flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 cursor-pointer group">
-                        <button
-                          onClick={() => toggleCategory(cat)}
-                          className="flex-shrink-0 text-gray-400 hover:text-brand-600"
-                        >
-                          {state === 'all'
-                            ? <CheckSquare size={14} className="text-brand-600" />
-                            : state === 'some'
-                            ? <MinusSquare size={14} className="text-brand-400" />
-                            : <Square size={14} />}
-                        </button>
-                        <button
-                          onClick={() => toggleCategoryExpand(cat)}
-                          className="flex-1 flex items-center justify-between text-left"
-                        >
-                          <span className="text-xs font-semibold text-gray-800">{cat}</span>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-400">{checks.filter((c) => effectiveSelected.has(c.id)).length}/{checks.length}</span>
-                            {expanded ? <ChevronDown size={12} className="text-gray-400" /> : <ChevronRightIcon size={12} className="text-gray-400" />}
-                          </div>
-                        </button>
-                      </div>
-
-                      {/* Individual checks */}
-                      {expanded && (
-                        <div className="bg-gray-50 border-t">
-                          {checks.map((check) => (
-                            <div
-                              key={check.id}
-                              onClick={() => toggleCheck(check.id)}
-                              className="flex items-start gap-2 px-6 py-2 hover:bg-gray-100 cursor-pointer"
-                            >
-                              <div className="flex-shrink-0 mt-0.5 text-gray-400">
-                                {effectiveSelected.has(check.id)
-                                  ? <CheckSquare size={12} className="text-brand-600" />
-                                  : <Square size={12} />}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-xs text-gray-700 leading-snug line-clamp-2">{check.desc}</p>
-                                <span className={clsx(
-                                  'inline-block mt-0.5 text-xs px-1.5 rounded',
-                                  check.risk === 'High' ? 'bg-red-100 text-red-600' : check.risk === 'Medium' ? 'bg-yellow-100 text-yellow-600' : 'bg-green-100 text-green-600'
-                                )}>
-                                  {check.risk}
-                                </span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="border-t px-4 py-3 bg-gray-50 flex items-center justify-between">
-              <button onClick={() => { setSelectedCheckIds(null); setShowChecksPanel(false) }} className="text-xs text-gray-500 hover:text-gray-700 underline">
-                Reset to all
-              </button>
-              <button onClick={() => setShowChecksPanel(false)} className="btn-primary text-xs">
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   )
