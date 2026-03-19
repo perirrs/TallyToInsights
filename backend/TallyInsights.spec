@@ -47,8 +47,6 @@ hiddenimports += [
     'numpy',
     'pandas',
     'pandas.core.arrays.arrow',
-    'scipy',
-    'scipy.stats',
     'lxml',
     'lxml.etree',
     'lxml._elementpath',
