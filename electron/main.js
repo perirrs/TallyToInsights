@@ -18,6 +18,9 @@ const backendLauncher = require('./backend-launcher');
 // ── Environment detection ──────────────────────────────────────────────────
 const isDev = !app.isPackaged;
 
+// ── Desktop auto-login token (fetched once after backend starts) ───────────
+let desktopToken = null;
+
 // ── Encrypted activation store ─────────────────────────────────────────────
 const store = new Store({
   name: 'activation',
@@ -68,6 +71,7 @@ ipcMain.handle('get-machine-id', () => {
 });
 
 ipcMain.handle('get-version', () => app.getVersion());
+ipcMain.handle('get-desktop-token', () => desktopToken);
 
 // ── Window factory ─────────────────────────────────────────────────────────
 function createWindow({ width = 1280, height = 800, resizable = true, title = 'TallyInsights' } = {}) {
@@ -138,6 +142,15 @@ async function main() {
     );
 
     const started = await backendLauncher.start();
+
+    if (started) {
+      // Fetch a token so the React app can skip the sign-in screen
+      try {
+        const res = await fetch('http://127.0.0.1:8000/api/auth/desktop-auto-login', { method: 'POST' });
+        if (res.ok) desktopToken = await res.json();
+      } catch (_) {}
+    }
+
     loadingWin.close();
 
     if (!started) {

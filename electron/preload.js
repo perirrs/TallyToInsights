@@ -22,4 +22,10 @@ contextBridge.exposeInMainWorld('electron', {
 
   /** Returns the app version string. */
   getVersion: () => ipcRenderer.invoke('get-version'),
+
+  /**
+   * Returns the desktop auto-login token fetched from the backend after startup.
+   * Null in dev mode (use manual login instead).
+   */
+  getDesktopToken: () => ipcRenderer.invoke('get-desktop-token'),
 });

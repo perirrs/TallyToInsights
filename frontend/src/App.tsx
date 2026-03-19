@@ -28,6 +28,9 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 export default function App() {
   // null = checking, true = activated (or not in Electron), false = needs activation
   const [activated, setActivated] = useState<boolean | null>(null)
+  // false until we've attempted desktop auto-login (prevents flash of login screen)
+  const [ready, setReady] = useState(false)
+  const login = useAuthStore((s) => s.login)
 
   useEffect(() => {
     if (window.electron) {
@@ -35,11 +38,28 @@ export default function App() {
     } else {
       // Running in a browser (dev without Electron) — skip activation
       setActivated(true)
+      setReady(true)
     }
   }, [])
 
-  // Blank slate while we check activation status
-  if (activated === null) {
+  // After activation is confirmed, attempt desktop auto-login
+  useEffect(() => {
+    if (activated === null) return
+    if (!activated) { setReady(true); return }  // show activation screen
+
+    const api = (window.electron as any)?.getDesktopToken
+    if (!api) { setReady(true); return }  // browser/dev mode — use normal login
+
+    api().then((data: any) => {
+      if (data?.access_token) {
+        login(data.access_token, data.user_id, data.name, data.is_admin)
+      }
+      setReady(true)
+    }).catch(() => setReady(true))
+  }, [activated])
+
+  // Blank slate while checking activation / fetching desktop token
+  if (!ready) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
         <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from datetime import datetime
 from app.database import get_db
@@ -34,6 +34,29 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=403, detail="Account disabled")
     user.last_login = datetime.utcnow()
     db.commit()
+    token = create_access_token({"sub": user.id})
+    return Token(access_token=token, user_id=user.id, name=user.name, is_admin=user.is_admin)
+
+
+@router.post("/desktop-auto-login", response_model=Token)
+def desktop_auto_login(request: Request, db: Session = Depends(get_db)):
+    """Desktop-only: auto-login without credentials. Localhost access only."""
+    client_host = request.client.host if request.client else ""
+    if client_host not in ("127.0.0.1", "::1"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    # Get the first active admin, or create one on first launch
+    user = db.query(User).filter(User.is_active == True, User.is_admin == True).first()
+    if not user:
+        user = User(
+            email="admin@tallyinsights.local",
+            name="Admin",
+            hashed_password=hash_password("desktop-local-only"),
+            is_admin=True,
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
     token = create_access_token({"sub": user.id})
     return Token(access_token=token, user_id=user.id, name=user.name, is_admin=user.is_admin)
 
