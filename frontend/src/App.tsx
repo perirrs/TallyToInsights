@@ -19,6 +19,7 @@ import AuditPage from './pages/Audit/AuditDashboard'
 import CheckDetailPage from './pages/Audit/CheckDetail'
 import ChecksPage from './pages/Checks'
 import ActivationPage from './pages/Activation'
+import DumpLayout from './pages/DumpLayout'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token)
@@ -90,16 +91,21 @@ export default function App() {
           <Route index element={<Navigate to="/companies" replace />} />
           <Route path="companies" element={<CompaniesPage />} />
           <Route path="companies/:companyId/uploads" element={<UploadsPage />} />
-          <Route path="dumps/:dumpId/dashboard" element={<DashboardPage />} />
-          <Route path="dumps/:dumpId/financial" element={<FinancialPage />} />
-          <Route path="dumps/:dumpId/cashflow" element={<CashFlowPage />} />
-          <Route path="dumps/:dumpId/receivables" element={<ReceivablesPage />} />
-          <Route path="dumps/:dumpId/gst" element={<GSTPage />} />
-          <Route path="dumps/:dumpId/inventory" element={<InventoryPage />} />
-          <Route path="dumps/:dumpId/payroll" element={<PayrollPage />} />
-          <Route path="dumps/:dumpId/vouchers" element={<VouchersPage />} />
-          <Route path="dumps/:dumpId/audit" element={<AuditPage />} />
-          <Route path="dumps/:dumpId/audit/:checkId" element={<CheckDetailPage />} />
+
+          {/* All dump-level routes share the DumpLayout which renders the persistent Checks sidebar */}
+          <Route path="dumps/:dumpId" element={<DumpLayout />}>
+            <Route path="dashboard" element={<DashboardPage />} />
+            <Route path="financial" element={<FinancialPage />} />
+            <Route path="cashflow" element={<CashFlowPage />} />
+            <Route path="receivables" element={<ReceivablesPage />} />
+            <Route path="gst" element={<GSTPage />} />
+            <Route path="inventory" element={<InventoryPage />} />
+            <Route path="payroll" element={<PayrollPage />} />
+            <Route path="vouchers" element={<VouchersPage />} />
+            <Route path="audit" element={<AuditPage />} />
+            <Route path="audit/:checkId" element={<CheckDetailPage />} />
+          </Route>
+
           <Route path="companies/:companyId/compare" element={<ComparePage />} />
           <Route path="checks" element={<ChecksPage />} />
         </Route>
