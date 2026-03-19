@@ -18,7 +18,8 @@ let backendProcess = null;
  * Returns true when the health endpoint responds, false on timeout.
  */
 async function start() {
-  const exePath = path.join(process.resourcesPath, 'backend', 'backend.exe');
+  const binaryName = process.platform === 'win32' ? 'backend.exe' : 'backend';
+  const exePath = path.join(process.resourcesPath, 'backend', binaryName);
 
   backendProcess = spawn(exePath, [], {
     cwd: path.dirname(exePath),

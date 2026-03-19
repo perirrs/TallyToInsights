@@ -16,9 +16,15 @@ if getattr(sys, 'frozen', False):
     sys.path.insert(0, bundle_dir)
     os.chdir(bundle_dir)
 
-# ── User data directory (AppData\Roaming\TallyInsights) ──────────────────
-appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
-data_dir = os.path.join(appdata, 'TallyInsights')
+# ── User data directory (cross-platform) ─────────────────────────────────
+if sys.platform == 'win32':
+    appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
+    data_dir = os.path.join(appdata, 'TallyInsights')
+elif sys.platform == 'darwin':
+    data_dir = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support', 'TallyInsights')
+else:
+    # Linux / fallback
+    data_dir = os.path.join(os.environ.get('XDG_DATA_HOME', os.path.expanduser('~/.local/share')), 'TallyInsights')
 uploads_dir = os.path.join(data_dir, 'uploads')
 os.makedirs(uploads_dir, exist_ok=True)
 

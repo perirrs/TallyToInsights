@@ -69,16 +69,35 @@ function validateKey(key) {
 
 /**
  * Get a stable machine identifier.
- * Uses Windows UUID via wmic; falls back to hashed hostname+username.
+ * Windows: WMIC UUID. macOS: system_profiler hardware UUID. Fallback: hashed hostname+username.
  */
 function getMachineId() {
+  // Windows
+  if (process.platform === 'win32') {
+    try {
+      const out = execSync('wmic csproduct get uuid', { encoding: 'utf8', timeout: 5000 });
+      const match = out.match(/[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}/i);
+      if (match) return match[0].toUpperCase();
+    } catch (_) {}
+  }
+
+  // macOS
+  if (process.platform === 'darwin') {
+    try {
+      const out = execSync('system_profiler SPHardwareDataType', { encoding: 'utf8', timeout: 5000 });
+      const match = out.match(/Hardware UUID:\s*([A-F0-9-]+)/i);
+      if (match) return match[1].toUpperCase();
+    } catch (_) {}
+  }
+
+  // Linux / fallback
   try {
-    const out = execSync('wmic csproduct get uuid', { encoding: 'utf8', timeout: 5000 });
-    const match = out.match(/[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}/i);
-    if (match) return match[0].toUpperCase();
+    const out = execSync('cat /etc/machine-id', { encoding: 'utf8', timeout: 3000 });
+    const id = out.trim();
+    if (id.length >= 16) return id.slice(0, 36).toUpperCase();
   } catch (_) {}
 
-  // Fallback: hash of hostname + username
+  // Final fallback: hash of hostname + username
   const raw = `${os.hostname()}::${os.userInfo().username}`;
   return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 36).toUpperCase();
 }
