@@ -23,11 +23,18 @@ def _safe_float(val) -> float:
 
 
 def _safe_date(val) -> date | None:
-    if pd.isna(val):
+    if val is None:
         return None
+    try:
+        if pd.isna(val):
+            return None
+    except (TypeError, ValueError):
+        pass
     if isinstance(val, (date, datetime)):
         return val.date() if isinstance(val, datetime) else val
     s = str(val).strip()
+    if not s or s.lower() in ("nan", "nat", "none", ""):
+        return None
     for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%b-%Y", "%d %b %Y", "%Y%m%d"):
         try:
             return datetime.strptime(s, fmt).date()
@@ -37,9 +44,10 @@ def _safe_date(val) -> date | None:
 
 
 def _find_header_row(df: pd.DataFrame, keywords: list[str]) -> int:
-    for i, row in df.iterrows():
-        vals = [str(v).lower().strip() for v in row.values if not pd.isna(v)]
-        if sum(1 for k in keywords if any(k in v for v in vals)) >= len(keywords) // 2 + 1:
+    for i in range(min(10, len(df))):
+        vals = [str(v).lower().strip() for v in df.iloc[i].values if str(v) not in ("nan", "None", "")]
+        joined = " ".join(vals)
+        if sum(1 for k in keywords if k in joined) >= max(1, len(keywords) // 2 + 1):
             return i
     return 0
 
@@ -58,8 +66,11 @@ def parse_excel(file_path: str) -> ParseResult:
         if df_raw.empty:
             continue
 
-        # Try to detect what kind of sheet this is
-        first_rows = " ".join(str(v).lower() for v in df_raw.iloc[:5].values.flatten() if not pd.isna(str(v)))
+        # Detect sheet type from first 5 rows
+        first_rows = " ".join(
+            str(v).lower() for v in df_raw.iloc[:5].values.flatten()
+            if str(v) not in ("nan", "None", "")
+        )
 
         if any(k in first_rows for k in ["day book", "voucher", "daybook"]):
             _parse_voucher_sheet(df_raw, result)
@@ -70,7 +81,7 @@ def parse_excel(file_path: str) -> ParseResult:
         elif any(k in first_rows for k in ["stock", "inventory", "item"]):
             _parse_stock_sheet(df_raw, result)
         else:
-            # Attempt generic voucher detection
+            # Generic attempt — try as voucher sheet
             _parse_voucher_sheet(df_raw, result)
 
     return result
@@ -80,7 +91,7 @@ def _parse_voucher_sheet(df_raw: pd.DataFrame, result: ParseResult):
     # Find header row
     header_row = 0
     for i in range(min(10, len(df_raw))):
-        vals = [str(v).lower() for v in df_raw.iloc[i].values if not pd.isna(str(v)) and str(v) != "nan"]
+        vals = [str(v).lower() for v in df_raw.iloc[i].values if str(v) not in ("nan", "None")]
         if any(k in " ".join(vals) for k in ["date", "voucher", "amount", "dr", "cr"]):
             header_row = i
             break
@@ -90,7 +101,6 @@ def _parse_voucher_sheet(df_raw: pd.DataFrame, result: ParseResult):
     df = df.iloc[1:].reset_index(drop=True)
     df = df.dropna(how="all")
 
-    # Map columns
     col_map = {
         "date": ["date", "voucher_date", "vch_date"],
         "voucher_no": ["voucher_no", "vch_no", "number", "voucher_number", "no."],
@@ -122,7 +132,8 @@ def _parse_voucher_sheet(df_raw: pd.DataFrame, result: ParseResult):
         return
 
     dates = []
-    for _, row in df.iterrows():
+    # Use to_dict('records') — 3-5x faster than iterrows
+    for row in df.to_dict("records"):
         d = _safe_date(row.get(date_col))
         if not d:
             continue
@@ -134,12 +145,16 @@ def _parse_voucher_sheet(df_raw: pd.DataFrame, result: ParseResult):
             amount = max(dr, cr)
 
         vtype = str(row.get(vtype_col, "Journal")).strip() if vtype_col else "Journal"
-        if not vtype or vtype == "nan":
+        if not vtype or vtype in ("nan", "None", ""):
             vtype = "Journal"
 
         party = str(row.get(party_col, "")).strip() if party_col else ""
-        if party == "nan":
+        if party in ("nan", "None"):
             party = ""
+
+        narration = str(row.get(nar_col, "")).strip() if nar_col else ""
+        if narration in ("nan", "None"):
+            narration = ""
 
         lines = []
         if dr > 0 and party:
@@ -153,7 +168,7 @@ def _parse_voucher_sheet(df_raw: pd.DataFrame, result: ParseResult):
             amount=amount,
             voucher_number=str(row.get(vno_col, "")).strip() if vno_col else "",
             party_ledger=party,
-            narration=str(row.get(nar_col, "")).strip() if nar_col else "",
+            narration=narration,
             lines=lines,
         )
         result.vouchers.append(vch)
@@ -169,7 +184,7 @@ def _parse_voucher_sheet(df_raw: pd.DataFrame, result: ParseResult):
 def _parse_trial_balance(df_raw: pd.DataFrame, result: ParseResult):
     header_row = 0
     for i in range(min(10, len(df_raw))):
-        vals = [str(v).lower() for v in df_raw.iloc[i].values if str(v) != "nan"]
+        vals = [str(v).lower() for v in df_raw.iloc[i].values if str(v) not in ("nan", "None")]
         if any(k in " ".join(vals) for k in ["particulars", "ledger", "account", "name"]):
             header_row = i
             break
@@ -194,9 +209,9 @@ def _parse_trial_balance(df_raw: pd.DataFrame, result: ParseResult):
     opening_cr = find_col(["opening_cr", "opening_credit", "op_cr"])
     group_col = find_col(["group", "parent", "category"])
 
-    for _, row in df.iterrows():
+    for row in df.to_dict("records"):
         name = str(row[name_col]).strip()
-        if not name or name.lower() in ("nan", "total", "grand total"):
+        if not name or name.lower() in ("nan", "none", "total", "grand total"):
             continue
 
         closing = 0.0
@@ -212,6 +227,8 @@ def _parse_trial_balance(df_raw: pd.DataFrame, result: ParseResult):
             opening -= _safe_float(row.get(opening_cr, 0))
 
         group = str(row.get(group_col, "")).strip() if group_col else ""
+        if group in ("nan", "None"):
+            group = ""
 
         result.ledgers.append(NLedger(
             name=name,
@@ -228,7 +245,7 @@ def _parse_ledger_sheet(df_raw: pd.DataFrame, result: ParseResult):
 def _parse_stock_sheet(df_raw: pd.DataFrame, result: ParseResult):
     header_row = 0
     for i in range(min(10, len(df_raw))):
-        vals = [str(v).lower() for v in df_raw.iloc[i].values if str(v) != "nan"]
+        vals = [str(v).lower() for v in df_raw.iloc[i].values if str(v) not in ("nan", "None")]
         if any(k in " ".join(vals) for k in ["item", "stock", "quantity", "rate", "value"]):
             header_row = i
             break
@@ -257,9 +274,9 @@ def _parse_stock_sheet(df_raw: pd.DataFrame, result: ParseResult):
     group_col = find_col(["group", "category", "parent"])
     hsn_col = find_col(["hsn", "hsn_code"])
 
-    for _, row in df.iterrows():
+    for row in df.to_dict("records"):
         name = str(row[name_col]).strip()
-        if not name or name.lower() in ("nan", "total"):
+        if not name or name.lower() in ("nan", "none", "total"):
             continue
         result.stock_items.append(NStockItem(
             name=name,
