@@ -1,15 +1,16 @@
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import api from '../../api/client'
 import PageHeader from '../../components/UI/PageHeader'
 import { RiskBadge, StatusBadge } from '../../components/UI/RiskBadge'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, ChevronLeft } from 'lucide-react'
 
 const INR = (v: number) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(v)
 
 export default function CheckDetailPage() {
   const { dumpId, checkId } = useParams<{ dumpId: string; checkId: string }>()
+  const navigate = useNavigate()
 
   const { data: check, isLoading } = useQuery({
     queryKey: ['audit-check', dumpId, checkId],
@@ -21,9 +22,9 @@ export default function CheckDetailPage() {
 
   return (
     <div className="p-6">
-      <Link to={`/dumps/${dumpId}/audit`} className="flex items-center gap-1 text-sm text-brand-600 hover:underline mb-4">
-        <ArrowLeft size={14} /> Back to Audit Report
-      </Link>
+      <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4">
+        <ChevronLeft size={16} /> Back
+      </button>
 
       <div className="card mb-6">
         <div className="flex items-start gap-4">

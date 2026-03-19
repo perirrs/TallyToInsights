@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import Base, engine
-from app.routers import auth, companies, uploads, reports, audit, exports
+from app.routers import auth, companies, uploads, reports, audit, exports, audit_checks
 import app.models  # ensure all models are registered
 
 # Create tables
@@ -29,6 +29,7 @@ app.include_router(uploads.router)
 app.include_router(reports.router)
 app.include_router(audit.router)
 app.include_router(exports.router)
+app.include_router(audit_checks.router)
 
 
 @app.get("/api/health")

@@ -1,4 +1,5 @@
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
+import { ChevronLeft } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import api from '../../api/client'
 import PageHeader from '../../components/UI/PageHeader'
@@ -9,6 +10,7 @@ const INR = (v: number) => new Intl.NumberFormat('en-IN', { maximumFractionDigit
 
 export default function PayrollPage() {
   const { dumpId } = useParams<{ dumpId: string }>()
+  const navigate = useNavigate()
   const { data, isLoading } = useQuery({
     queryKey: ['payroll', dumpId],
     queryFn: () => api.get(`/reports/${dumpId}/payroll`).then((r) => r.data),
@@ -19,6 +21,9 @@ export default function PayrollPage() {
 
   return (
     <div className="p-6">
+      <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4">
+        <ChevronLeft size={16} /> Back
+      </button>
       <PageHeader title="Payroll Report" subtitle="Salary register and employee summary" />
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">

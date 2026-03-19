@@ -1,16 +1,54 @@
-import { useParams } from 'react-router-dom'
+import { useState, useMemo } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { ChevronLeft } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import api from '../../api/client'
 import PageHeader from '../../components/UI/PageHeader'
-import KPICard from '../../components/UI/KPICard'
 
 const INR = (v: number) => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(v)
 
-function AgingTable({ dumpId, type }: { dumpId: string; type: 'receivables' | 'payables' }) {
+function AgingTable({
+  dumpId, type, partySearch, agingBucket, sortBy,
+}: {
+  dumpId: string
+  type: 'receivables' | 'payables'
+  partySearch: string
+  agingBucket: string
+  sortBy: string
+}) {
   const { data, isLoading } = useQuery({
     queryKey: [type, dumpId],
     queryFn: () => api.get(`/reports/${dumpId}/${type}`).then((r) => r.data),
   })
+
+  const filtered = useMemo(() => {
+    if (!data) return []
+    let rows = [...(data.buckets || [])]
+
+    if (partySearch) {
+      rows = rows.filter((b: any) => b.party.toLowerCase().includes(partySearch.toLowerCase()))
+    }
+
+    if (agingBucket === 'current') {
+      rows = rows.filter((b: any) => b.current > 0)
+    } else if (agingBucket === '30') {
+      rows = rows.filter((b: any) => b.days_1_30 > 0)
+    } else if (agingBucket === '60') {
+      rows = rows.filter((b: any) => b.days_31_60 > 0)
+    } else if (agingBucket === '90plus') {
+      rows = rows.filter((b: any) => b.days_90_plus > 0)
+    }
+
+    if (sortBy === 'amount_desc') {
+      rows.sort((a: any, b: any) => b.total - a.total)
+    } else if (sortBy === 'amount_asc') {
+      rows.sort((a: any, b: any) => a.total - b.total)
+    } else if (sortBy === 'overdue_desc') {
+      rows.sort((a: any, b: any) => (b.days_90_plus + b.days_61_90) - (a.days_90_plus + a.days_61_90))
+    }
+
+    return rows
+  }, [data, partySearch, agingBucket, sortBy])
 
   if (isLoading) return <div className="text-gray-500 p-4">Loading...</div>
   if (!data) return null
@@ -26,6 +64,7 @@ function AgingTable({ dumpId, type }: { dumpId: string; type: 'receivables' | 'p
           <p className="text-xs text-red-600">₹{INR(data.overdue_amount)} overdue</p>
         </div>
       </div>
+      <p className="text-xs text-gray-500 mb-3">{filtered.length} of {data.buckets?.length || 0} parties shown</p>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
@@ -40,7 +79,7 @@ function AgingTable({ dumpId, type }: { dumpId: string; type: 'receivables' | 'p
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {data.buckets.map((b: any, i: number) => (
+            {filtered.map((b: any, i: number) => (
               <tr key={i} className={b.days_90_plus > 0 ? 'bg-red-50' : ''}>
                 <td className="px-3 py-1.5 font-medium text-gray-800 max-w-[200px] truncate">{b.party}</td>
                 <td className="px-3 py-1.5 text-right text-gray-600">{b.current > 0 ? INR(b.current) : '—'}</td>
@@ -60,12 +99,71 @@ function AgingTable({ dumpId, type }: { dumpId: string; type: 'receivables' | 'p
 
 export default function ReceivablesPage() {
   const { dumpId } = useParams<{ dumpId: string }>()
+  const navigate = useNavigate()
+
+  const [partySearch, setPartySearch] = useState('')
+  const [agingBucket, setAgingBucket] = useState('')
+  const [sortBy, setSortBy] = useState('amount_desc')
+
   return (
     <div className="p-6">
+      <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4">
+        <ChevronLeft size={16} /> Back
+      </button>
       <PageHeader title="Receivables & Payables" subtitle="Aging analysis and outstanding balances" />
+
+      {/* Drill-down Filters */}
+      <div className="card mb-5 py-3">
+        <div className="flex flex-wrap gap-3 items-end">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Search Party</label>
+            <input
+              value={partySearch}
+              onChange={(e) => setPartySearch(e.target.value)}
+              placeholder="Party name..."
+              className="border rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none w-48"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Aging Bucket</label>
+            <select
+              value={agingBucket}
+              onChange={(e) => setAgingBucket(e.target.value)}
+              className="border rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none"
+            >
+              <option value="">All buckets</option>
+              <option value="current">Current (0 days)</option>
+              <option value="30">1-30 days</option>
+              <option value="60">31-60 days</option>
+              <option value="90plus">90+ days overdue</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Sort By</label>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="border rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none"
+            >
+              <option value="amount_desc">Highest Amount</option>
+              <option value="amount_asc">Lowest Amount</option>
+              <option value="overdue_desc">Most Overdue</option>
+            </select>
+          </div>
+          {(partySearch || agingBucket) && (
+            <button
+              onClick={() => { setPartySearch(''); setAgingBucket('') }}
+              className="text-xs text-gray-500 hover:text-gray-700 underline self-end pb-1.5"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      </div>
+
       <div className="space-y-6">
-        <AgingTable dumpId={dumpId!} type="receivables" />
-        <AgingTable dumpId={dumpId!} type="payables" />
+        <AgingTable dumpId={dumpId!} type="receivables" partySearch={partySearch} agingBucket={agingBucket} sortBy={sortBy} />
+        <AgingTable dumpId={dumpId!} type="payables" partySearch={partySearch} agingBucket={agingBucket} sortBy={sortBy} />
       </div>
     </div>
   )

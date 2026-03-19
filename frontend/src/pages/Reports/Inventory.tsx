@@ -1,4 +1,5 @@
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
+import { ChevronLeft } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import api from '../../api/client'
 import PageHeader from '../../components/UI/PageHeader'
@@ -8,6 +9,7 @@ const INR = (v: number) => new Intl.NumberFormat('en-IN', { maximumFractionDigit
 
 export default function InventoryPage() {
   const { dumpId } = useParams<{ dumpId: string }>()
+  const navigate = useNavigate()
   const { data, isLoading } = useQuery({
     queryKey: ['inventory', dumpId],
     queryFn: () => api.get(`/reports/${dumpId}/inventory`).then((r) => r.data),
@@ -18,6 +20,9 @@ export default function InventoryPage() {
 
   return (
     <div className="p-6">
+      <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4">
+        <ChevronLeft size={16} /> Back
+      </button>
       <PageHeader title="Inventory Report" subtitle="Stock summary, slow-moving & negative stock" />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">

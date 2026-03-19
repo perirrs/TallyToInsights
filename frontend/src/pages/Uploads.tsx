@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useDropzone } from 'react-dropzone'
 import api from '../api/client'
 import PageHeader from '../components/UI/PageHeader'
-import { Upload, FileText, CheckCircle, XCircle, Loader, BarChart3, RefreshCw } from 'lucide-react'
+import { Upload, FileText, CheckCircle, XCircle, Loader, BarChart3, RefreshCw, Trash2, ChevronLeft } from 'lucide-react'
 import clsx from 'clsx'
 
 interface Dump {
@@ -37,6 +37,13 @@ export default function UploadsPage() {
       const d = query.state.data
       if (d?.some((d) => d.status === 'processing' || d.status === 'uploaded')) return 3000
       return false
+    },
+  })
+
+  const deleteDump = useMutation({
+    mutationFn: (dumpId: number) => api.delete(`/uploads/${dumpId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['dumps', companyId] })
     },
   })
 
@@ -77,8 +84,21 @@ export default function UploadsPage() {
     return <RefreshCw size={16} className="text-gray-400 animate-spin" />
   }
 
+  const handleDeleteDump = (dump: Dump) => {
+    if (window.confirm(`Delete "${dump.filename}"? This cannot be undone.`)) {
+      deleteDump.mutate(dump.id)
+    }
+  }
+
   return (
     <div className="p-6">
+      <button
+        onClick={() => navigate(-1)}
+        className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4"
+      >
+        <ChevronLeft size={16} /> Back to Companies
+      </button>
+
       <PageHeader
         title="Data Dumps"
         subtitle={`Tally exports for Company #${companyId}`}
@@ -109,19 +129,19 @@ export default function UploadsPage() {
         <div
           {...getRootProps()}
           className={clsx(
-            'border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors',
-            isDragActive ? 'border-brand-500 bg-brand-50' : 'border-gray-300 hover:border-brand-400',
+            'border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors',
+            isDragActive ? 'border-brand-500 bg-brand-50' : 'border-gray-300 hover:border-brand-400 hover:bg-gray-50',
           )}
         >
           <input {...getInputProps()} />
           {uploading ? (
             <div className="flex flex-col items-center gap-2 text-brand-600">
-              <Loader size={32} className="animate-spin" />
+              <Loader size={36} className="animate-spin" />
               <p className="text-sm font-medium">Uploading & processing...</p>
             </div>
           ) : (
             <div className="flex flex-col items-center gap-2 text-gray-500">
-              <Upload size={32} className="text-gray-400" />
+              <Upload size={36} className="text-gray-400" />
               <p className="text-sm font-medium">
                 {isDragActive ? 'Drop file here' : 'Drag & drop or click to upload'}
               </p>
@@ -174,6 +194,13 @@ export default function UploadsPage() {
                   {dump.status === 'failed' && (
                     <span className="text-xs text-red-600 font-medium">Failed</span>
                   )}
+                  <button
+                    onClick={() => handleDeleteDump(dump)}
+                    title="Delete dump"
+                    className="p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
               </div>
             </div>

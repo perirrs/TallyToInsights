@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../api/client'
 import PageHeader from '../components/UI/PageHeader'
-import { Building2, Plus, Upload, ChevronRight } from 'lucide-react'
+import { Building2, Plus, Upload, ChevronRight, Trash2, Pencil } from 'lucide-react'
 
 interface Company {
   id: number
@@ -15,10 +15,13 @@ interface Company {
   created_at: string
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
 export default function CompaniesPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
+  const [editingCompany, setEditingCompany] = useState<Company | null>(null)
   const [form, setForm] = useState({
     name: '', gstin: '', pan: '', address: '',
     financial_year_start_month: 4, currency: 'INR',
@@ -34,9 +37,66 @@ export default function CompaniesPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['companies'] })
       setShowForm(false)
-      setForm({ name: '', gstin: '', pan: '', address: '', financial_year_start_month: 4, currency: 'INR' })
+      resetForm()
     },
   })
+
+  const update = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: typeof form }) =>
+      api.put(`/companies/${id}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['companies'] })
+      setShowForm(false)
+      setEditingCompany(null)
+      resetForm()
+    },
+  })
+
+  const remove = useMutation({
+    mutationFn: (id: number) => api.delete(`/companies/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['companies'] })
+    },
+  })
+
+  const resetForm = () => {
+    setForm({ name: '', gstin: '', pan: '', address: '', financial_year_start_month: 4, currency: 'INR' })
+  }
+
+  const openEdit = (c: Company, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEditingCompany(c)
+    setForm({
+      name: c.name,
+      gstin: c.gstin || '',
+      pan: c.pan || '',
+      address: '',
+      financial_year_start_month: c.financial_year_start_month,
+      currency: c.currency,
+    })
+    setShowForm(true)
+  }
+
+  const openAdd = () => {
+    setEditingCompany(null)
+    resetForm()
+    setShowForm(true)
+  }
+
+  const handleDelete = (c: Company, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (window.confirm(`Delete company "${c.name}"? This cannot be undone.`)) {
+      remove.mutate(c.id)
+    }
+  }
+
+  const handleSubmit = () => {
+    if (editingCompany) {
+      update.mutate({ id: editingCompany.id, data: form })
+    } else {
+      create.mutate(form)
+    }
+  }
 
   return (
     <div className="p-6">
@@ -44,7 +104,7 @@ export default function CompaniesPage() {
         title="Companies"
         subtitle="Manage Tally companies and their data dumps"
         actions={
-          <button onClick={() => setShowForm(true)} className="btn-primary flex items-center gap-2 text-sm">
+          <button onClick={openAdd} className="btn-primary flex items-center gap-2 text-sm">
             <Plus size={16} /> Add Company
           </button>
         }
@@ -52,7 +112,9 @@ export default function CompaniesPage() {
 
       {showForm && (
         <div className="card mb-6">
-          <h3 className="font-semibold text-gray-800 mb-4">New Company</h3>
+          <h3 className="font-semibold text-gray-800 mb-4">
+            {editingCompany ? `Edit: ${editingCompany.name}` : 'New Company'}
+          </h3>
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">Company Name *</label>
@@ -105,13 +167,20 @@ export default function CompaniesPage() {
           </div>
           <div className="flex gap-2 mt-4">
             <button
-              onClick={() => create.mutate(form)}
-              disabled={!form.name || create.isPending}
+              onClick={handleSubmit}
+              disabled={!form.name || create.isPending || update.isPending}
               className="btn-primary text-sm"
             >
-              {create.isPending ? 'Creating...' : 'Create Company'}
+              {create.isPending || update.isPending
+                ? (editingCompany ? 'Saving...' : 'Creating...')
+                : (editingCompany ? 'Save Changes' : 'Create Company')}
             </button>
-            <button onClick={() => setShowForm(false)} className="btn-secondary text-sm">Cancel</button>
+            <button
+              onClick={() => { setShowForm(false); setEditingCompany(null); resetForm() }}
+              className="btn-secondary text-sm"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}
@@ -126,26 +195,50 @@ export default function CompaniesPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {companies.map((c) => (
-            <div key={c.id} className="card hover:shadow-md transition-shadow cursor-pointer"
-              onClick={() => navigate(`/companies/${c.id}/uploads`)}>
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-brand-50 rounded-lg flex items-center justify-center">
-                    <Building2 size={20} className="text-brand-600" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-gray-900">{c.name}</h3>
-                    <p className="text-xs text-gray-500">{c.gstin || 'No GSTIN'}</p>
-                  </div>
-                </div>
-                <ChevronRight size={16} className="text-gray-400 mt-1" />
+            <div
+              key={c.id}
+              className="card hover:shadow-md transition-shadow cursor-pointer relative"
+              onClick={() => navigate(`/companies/${c.id}/uploads`)}
+            >
+              {/* Action buttons top-right */}
+              <div className="absolute top-3 right-3 flex items-center gap-1">
+                <button
+                  onClick={(e) => openEdit(c, e)}
+                  title="Edit company"
+                  className="p-1.5 rounded-md text-gray-400 hover:text-brand-600 hover:bg-brand-50 transition-colors"
+                >
+                  <Pencil size={14} />
+                </button>
+                <button
+                  onClick={(e) => handleDelete(c, e)}
+                  title="Delete company"
+                  className="p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                >
+                  <Trash2 size={14} />
+                </button>
               </div>
-              <div className="mt-4 flex gap-3">
+
+              <div className="flex items-start gap-3 pr-16">
+                <div className="w-11 h-11 bg-brand-50 rounded-xl flex items-center justify-center text-brand-700 font-bold text-lg flex-shrink-0">
+                  {c.name.charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <h3 className="font-semibold text-gray-900 leading-tight">{c.name}</h3>
+                  {c.gstin && <p className="text-xs text-gray-500 mt-0.5">{c.gstin}</p>}
+                  {c.pan && <p className="text-xs text-gray-400">{c.pan}</p>}
+                </div>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between">
+                <div className="text-xs text-gray-400">
+                  FY starts {MONTHS[(c.financial_year_start_month - 1) % 12]} ·{' '}
+                  {c.created_at ? new Date(c.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : ''}
+                </div>
                 <button
                   onClick={(e) => { e.stopPropagation(); navigate(`/companies/${c.id}/uploads`) }}
-                  className="flex items-center gap-1 text-xs text-brand-600 hover:underline"
+                  className="flex items-center gap-1 text-xs text-brand-600 hover:text-brand-700 font-medium"
                 >
-                  <Upload size={12} /> Uploads
+                  <Upload size={11} /> Uploads <ChevronRight size={11} />
                 </button>
               </div>
             </div>

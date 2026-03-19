@@ -17,7 +17,7 @@ import ComparePage from './pages/Reports/Compare'
 import VouchersPage from './pages/Reports/Vouchers'
 import AuditPage from './pages/Audit/AuditDashboard'
 import CheckDetailPage from './pages/Audit/CheckDetail'
-import UsersPage from './pages/Users'
+import ChecksPage from './pages/Checks'
 import ActivationPage from './pages/Activation'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -101,7 +101,7 @@ export default function App() {
           <Route path="dumps/:dumpId/audit" element={<AuditPage />} />
           <Route path="dumps/:dumpId/audit/:checkId" element={<CheckDetailPage />} />
           <Route path="companies/:companyId/compare" element={<ComparePage />} />
-          <Route path="users" element={<UsersPage />} />
+          <Route path="checks" element={<ChecksPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

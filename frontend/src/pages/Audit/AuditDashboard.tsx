@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import api from '../../api/client'
 import PageHeader from '../../components/UI/PageHeader'
@@ -7,13 +7,14 @@ import { RiskBadge, StatusBadge } from '../../components/UI/RiskBadge'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts'
-import { Shield, AlertTriangle, CheckCircle, Search } from 'lucide-react'
+import { Shield, AlertTriangle, CheckCircle, Search, ChevronLeft } from 'lucide-react'
 
 const INR = (v: number) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(v)
 
 export default function AuditDashboardPage() {
   const { dumpId } = useParams<{ dumpId: string }>()
+  const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [filterRisk, setFilterRisk] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
@@ -48,9 +49,12 @@ export default function AuditDashboardPage() {
 
   return (
     <div className="p-6">
+      <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4">
+        <ChevronLeft size={16} /> Back
+      </button>
       <PageHeader
         title="Audit Report"
-        subtitle="300 automated checks across 16 categories"
+        subtitle="735 automated checks across 29 categories"
         actions={
           <a href={`/api/exports/${dumpId}/excel`} className="btn-secondary text-xs">Export Excel</a>
         }

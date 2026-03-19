@@ -1,4 +1,5 @@
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
+import { ChevronLeft } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import api from '../../api/client'
 import PageHeader from '../../components/UI/PageHeader'
@@ -9,6 +10,7 @@ const INR = (v: number) => new Intl.NumberFormat('en-IN', { maximumFractionDigit
 
 export default function GSTPage() {
   const { dumpId } = useParams<{ dumpId: string }>()
+  const navigate = useNavigate()
   const { data: gst, isLoading } = useQuery({
     queryKey: ['gst', dumpId],
     queryFn: () => api.get(`/reports/${dumpId}/gst`).then((r) => r.data),
@@ -19,6 +21,9 @@ export default function GSTPage() {
 
   return (
     <div className="p-6">
+      <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-4">
+        <ChevronLeft size={16} /> Back
+      </button>
       <PageHeader title="GST Report" subtitle="Monthly GST summary with ITC reconciliation" />
 
       <div className="grid grid-cols-3 gap-4 mb-6">

@@ -50,6 +50,17 @@ def update_company(company_id: int, data: CompanyCreate, db: Session = Depends(g
     return company
 
 
+@router.delete("/{company_id}", status_code=204)
+def delete_company(company_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if not user.is_admin and company not in user.companies:
+        raise HTTPException(status_code=403, detail="Access denied")
+    db.delete(company)
+    db.commit()
+
+
 @router.post("/{company_id}/users/{user_id}")
 def add_user_to_company(company_id: int, user_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     if not user.is_admin:

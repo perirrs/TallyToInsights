@@ -1,5 +1,5 @@
 """
-Audit Engine — runs all 300 checks across 16 modules.
+Audit Engine — runs all 735 checks across 29 categories.
 Loads data from DB into DataFrames and dispatches to each module.
 """
 from datetime import datetime
@@ -93,6 +93,20 @@ def run_audit(dump_id: int):
             ("related_party", "app.services.audit.checks.related_party"),
             ("temporal_patterns", "app.services.audit.checks.temporal_patterns"),
             ("user_it_audit", "app.services.audit.checks.user_it_audit"),
+            # New checks 301-735 (29 categories total)
+            ("intra_period_variance", "app.services.audit.checks.intra_period_variance"),
+            ("inter_period_trend", "app.services.audit.checks.inter_period_trend"),
+            ("pl_analysis", "app.services.audit.checks.pl_analysis"),
+            ("balance_sheet_analysis", "app.services.audit.checks.balance_sheet_analysis"),
+            ("cost_centre", "app.services.audit.checks.cost_centre"),
+            ("revenue_leakage", "app.services.audit.checks.revenue_leakage"),
+            ("procurement_contract", "app.services.audit.checks.procurement_contract"),
+            ("treasury_working_capital", "app.services.audit.checks.treasury_working_capital"),
+            ("advanced_forensic", "app.services.audit.checks.advanced_forensic"),
+            ("income_tax_deferred", "app.services.audit.checks.income_tax_deferred"),
+            ("consolidation_group", "app.services.audit.checks.consolidation_group"),
+            ("expense_deepdive", "app.services.audit.checks.expense_deepdive"),
+            ("indian_regulatory", "app.services.audit.checks.indian_regulatory"),
         ]
 
         for module_name, module_path in modules:
