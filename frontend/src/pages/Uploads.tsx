@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useDropzone } from 'react-dropzone'
 import api from '../api/client'
 import PageHeader from '../components/UI/PageHeader'
-import { Upload, FileText, CheckCircle, XCircle, Loader, BarChart3, RefreshCw, Trash2, ChevronLeft } from 'lucide-react'
+import { Upload, FileText, CheckCircle, XCircle, Loader, BarChart3, RefreshCw, Trash2, ChevronLeft, RotateCcw } from 'lucide-react'
 import clsx from 'clsx'
 
 interface Dump {
@@ -35,12 +35,13 @@ export default function UploadsPage() {
     queryFn: () => api.get(`/uploads/${companyId}`).then((r) => r.data),
     refetchInterval: (query) => {
       const d = query.state.data
-      if (d?.some((d) => d.status === 'processing' || d.status === 'uploaded')) return 3000
+      if (d?.some((d) => ['processing', 'uploaded', 'auditing'].includes(d.status))) return 3000
       return false
     },
   })
 
   const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [recheckingAll, setRecheckingAll] = useState(false)
 
   const deleteDump = useMutation({
     mutationFn: (dumpId: number) => api.delete(`/uploads/${dumpId}`),
@@ -53,6 +54,28 @@ export default function UploadsPage() {
       alert(`Delete failed: ${err?.response?.data?.detail || err.message || 'Unknown error'}`)
     },
   })
+
+  const recheckDump = useMutation({
+    mutationFn: (dumpId: number) => api.post(`/audit/${dumpId}/rerun`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dumps', companyId] }),
+    onError: (err: any) => {
+      alert(`Recheck failed: ${err?.response?.data?.detail || err.message || 'Unknown error'}`)
+    },
+  })
+
+  const handleRecheckAll = async () => {
+    const recheckable = dumps.filter((d) => ['processed', 'failed'].includes(d.status))
+    if (recheckable.length === 0) return
+    setRecheckingAll(true)
+    try {
+      await Promise.all(recheckable.map((d) => api.post(`/audit/${d.id}/rerun`)))
+      qc.invalidateQueries({ queryKey: ['dumps', companyId] })
+    } catch (err: any) {
+      alert(`Recheck all failed: ${err?.response?.data?.detail || err.message || 'Unknown error'}`)
+    } finally {
+      setRecheckingAll(false)
+    }
+  }
 
   const onDrop = useCallback(async (files: File[]) => {
     if (!files[0]) return
@@ -88,6 +111,7 @@ export default function UploadsPage() {
     if (status === 'processed') return <CheckCircle size={16} className="text-green-500" />
     if (status === 'failed') return <XCircle size={16} className="text-red-500" />
     if (status === 'processing') return <Loader size={16} className="text-blue-500 animate-spin" />
+    if (status === 'auditing') return <RotateCcw size={16} className="text-purple-500 animate-spin" />
     return <RefreshCw size={16} className="text-gray-400 animate-spin" />
   }
 
@@ -168,6 +192,22 @@ export default function UploadsPage() {
           <p>No data dumps yet. Upload your first Tally export above.</p>
         </div>
       ) : (
+        <>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm text-gray-500">{dumps.length} dump{dumps.length !== 1 ? 's' : ''}</p>
+            {dumps.some((d) => ['processed', 'failed'].includes(d.status)) && (
+              <button
+                onClick={handleRecheckAll}
+                disabled={recheckingAll || dumps.some((d) => d.status === 'auditing')}
+                className="flex items-center gap-1.5 text-xs font-medium text-purple-600 hover:text-purple-800 border border-purple-200 hover:border-purple-400 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-50"
+              >
+                {recheckingAll || dumps.some((d) => d.status === 'auditing')
+                  ? <Loader size={12} className="animate-spin" />
+                  : <RotateCcw size={12} />}
+                Recheck All
+              </button>
+            )}
+          </div>
         <div className="space-y-3">
           {dumps.map((dump) => (
             <div key={dump.id} className="card">
@@ -199,8 +239,23 @@ export default function UploadsPage() {
                   {dump.status === 'processing' && (
                     <span className="text-xs text-blue-600 font-medium">Processing...</span>
                   )}
+                  {dump.status === 'auditing' && (
+                    <span className="text-xs text-purple-600 font-medium flex items-center gap-1">
+                      <Loader size={11} className="animate-spin" /> Rechecking...
+                    </span>
+                  )}
                   {dump.status === 'failed' && (
                     <span className="text-xs text-red-600 font-medium">Failed</span>
+                  )}
+                  {['processed', 'failed'].includes(dump.status) && (
+                    <button
+                      onClick={() => recheckDump.mutate(dump.id)}
+                      disabled={recheckDump.isPending}
+                      title="Recheck against current checks"
+                      className="p-1.5 rounded-md text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition-colors disabled:opacity-50"
+                    >
+                      <RotateCcw size={14} />
+                    </button>
                   )}
                   <button
                     onClick={() => handleDeleteDump(dump)}
@@ -217,6 +272,7 @@ export default function UploadsPage() {
             </div>
           ))}
         </div>
+        </>
       )}
     </div>
   )

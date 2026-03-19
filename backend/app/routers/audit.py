@@ -142,7 +142,9 @@ def rerun_audit(
     user: User = Depends(get_current_user),
 ):
     dump = _get_dump(dump_id, db, user)
-    if dump.status not in ("processed", "failed"):
+    if dump.status not in ("processed", "failed", "auditing"):
         raise HTTPException(400, "Dump must be processed before audit")
+    dump.status = "auditing"
+    db.commit()
     background_tasks.add_task(run_audit, dump_id)
     return {"message": "Audit re-run started"}

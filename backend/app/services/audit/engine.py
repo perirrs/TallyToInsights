@@ -66,7 +66,7 @@ def run_audit(dump_id: int):
     db = SessionLocal()
     try:
         dump = db.query(DataDump).filter(DataDump.id == dump_id).first()
-        if not dump or dump.status != "processed":
+        if not dump or dump.status not in ("processed", "auditing"):
             return
 
         # Clear previous audit results
@@ -141,10 +141,20 @@ def run_audit(dump_id: int):
         for i in range(0, len(db_results), BATCH):
             db.add_all(db_results[i:i + BATCH])
             db.flush()
+
+        dump.status = "processed"
         db.commit()
 
     except Exception as e:
         db.rollback()
+        # Restore status so the dump isn't stuck in "auditing"
+        try:
+            dump2 = db.query(DataDump).filter(DataDump.id == dump_id).first()
+            if dump2 and dump2.status == "auditing":
+                dump2.status = "processed"
+                db.commit()
+        except Exception:
+            pass
         raise
     finally:
         db.close()
