@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from './store/authStore'
+import api from './api/client'
 import Layout from './components/Layout/Layout'
 import LoginPage from './pages/Login'
 import CompaniesPage from './pages/Companies'
@@ -47,15 +48,17 @@ export default function App() {
     if (activated === null) return
     if (!activated) { setReady(true); return }  // show activation screen
 
-    const api = (window.electron as any)?.getDesktopToken
-    if (!api) { setReady(true); return }  // browser/dev mode — use normal login
+    if (!window.electron) { setReady(true); return }  // plain browser — use normal login
 
-    api().then((data: any) => {
-      if (data?.access_token) {
-        login(data.access_token, data.user_id, data.name, data.is_admin)
-      }
-      setReady(true)
-    }).catch(() => setReady(true))
+    // Desktop app: call localhost-only endpoint to get a token automatically
+    api.post('/auth/desktop-auto-login')
+      .then(({ data }) => {
+        if (data?.access_token) {
+          login(data.access_token, data.user_id, data.name, data.is_admin)
+        }
+      })
+      .catch(() => {})
+      .finally(() => setReady(true))
   }, [activated])
 
   // Blank slate while checking activation / fetching desktop token
