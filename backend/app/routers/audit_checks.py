@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.utils.auth import get_current_user
@@ -151,9 +151,64 @@ def delete_check(check_id: int, db: Session = Depends(get_db), user: User = Depe
         save_overrides(overrides)
 
 
+@router.post("/bulk-delete", status_code=200)
+def bulk_delete_checks(
+    data: dict = Body(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Delete multiple checks by ID list."""
+    ids: list[int] = data.get("ids", [])
+    if not ids:
+        return {"deleted": 0}
+
+    overrides = load_overrides()
+    created = overrides.get("created", [])
+    created_ids = {c["id"] for c in created}
+    deleted_set = set(overrides.get("deleted", []))
+
+    new_created = [c for c in created if c["id"] not in ids]
+    for cid in ids:
+        if cid not in created_ids and cid not in deleted_set:
+            deleted_set.add(cid)
+
+    overrides["created"] = new_created
+    overrides["deleted"] = list(deleted_set)
+    save_overrides(overrides)
+    return {"deleted": len(ids)}
+
+
+RISK_MAP = {"h": "High", "m": "Medium", "l": "Low", "high": "High", "medium": "Medium", "low": "Low"}
+FEASIBILITY_MAP = {"auto": "Auto", "upload": "Upload", "module": "Module", "manual": "Manual"}
+
+
+def _find_header_row(ws):
+    """Find the row index (1-based) that contains the actual column headers.
+    Looks for a row where a cell contains 'audit check description' or 'description'.
+    Returns (header_row_index, headers_dict mapping normalized_name→col_index).
+    """
+    for row_idx in range(1, min(10, ws.max_row + 1)):
+        row_vals = [str(cell.value or "").strip() for cell in ws[row_idx]]
+        normalized = [v.lower() for v in row_vals]
+        if any("audit check description" in v or (v in ("description", "desc")) for v in normalized):
+            return row_idx, {v: i for i, v in enumerate(normalized) if v}
+    return None, {}
+
+
+def _col(row_vals, headers, *candidates):
+    """Return the first matching cell value from a list of candidate header names."""
+    for c in candidates:
+        if c in headers:
+            v = row_vals[headers[c]]
+            if v is not None:
+                return str(v).strip()
+    return ""
+
+
 @router.post("/upload-excel")
 async def upload_excel(
     file: UploadFile = File(...),
+    replace: bool = False,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -165,34 +220,82 @@ async def upload_excel(
         wb = openpyxl.load_workbook(io.BytesIO(content))
         ws = wb.active
 
+        header_row_idx, headers = _find_header_row(ws)
+        if header_row_idx is None:
+            raise HTTPException(400, "Could not find header row. Expected a column named 'Audit Check Description'.")
+
         overrides = load_overrides()
+
+        if replace:
+            # Replace all: clear created/deleted overrides, rewrite the base file
+            new_base = []
+            serial = 1
+            for row in ws.iter_rows(min_row=header_row_idx + 1, values_only=True):
+                row_vals = [str(v).strip() if v is not None else "" for v in row]
+                if not any(row_vals):
+                    continue
+                desc = _col(row_vals, headers, "audit check description", "description", "desc")
+                if not desc:
+                    continue
+                risk_raw = _col(row_vals, headers, "risk").upper()
+                risk = RISK_MAP.get(risk_raw.lower(), "Medium")
+                feasibility_raw = _col(row_vals, headers, "feasibility").lower()
+                feasibility = FEASIBILITY_MAP.get(feasibility_raw, "Auto")
+                analysis = _col(row_vals, headers, "analysis type", "analysis")
+                new_base.append({
+                    "id": serial,
+                    "desc": desc,
+                    "category": _col(row_vals, headers, "category"),
+                    "risk": risk,
+                    "feasibility": feasibility,
+                    "analysis": analysis,
+                    "module": _col(row_vals, headers, "tally module", "module"),
+                    "source": _col(row_vals, headers, "tally data source", "source"),
+                    "active": True,
+                })
+                serial += 1
+            os.makedirs(os.path.dirname(CHECKS_FILE), exist_ok=True)
+            with open(CHECKS_FILE, "w") as f:
+                json.dump(new_base, f, indent=2)
+            # Clear overrides since base is fresh
+            save_overrides({"created": [], "updated": {}, "deleted": []})
+            return {"message": f"Replaced all checks — {len(new_base)} checks imported"}
+
+        # Add mode: append to created overrides
         all_checks = merge_checks()
         max_id = max((c["id"] for c in all_checks), default=0)
-
-        headers = [str(cell.value).strip().lower() if cell.value else "" for cell in ws[1]]
         added = 0
 
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            if not any(row):
+        for row in ws.iter_rows(min_row=header_row_idx + 1, values_only=True):
+            row_vals = [str(v).strip() if v is not None else "" for v in row]
+            if not any(row_vals):
                 continue
-            row_dict = dict(zip(headers, row))
+            desc = _col(row_vals, headers, "audit check description", "description", "desc")
+            if not desc:
+                continue
+            risk_raw = _col(row_vals, headers, "risk")
+            risk = RISK_MAP.get(risk_raw.lower(), "Medium")
+            feasibility_raw = _col(row_vals, headers, "feasibility").lower()
+            feasibility = FEASIBILITY_MAP.get(feasibility_raw, "Auto")
+            analysis = _col(row_vals, headers, "analysis type", "analysis")
             max_id += 1
-            new_check = {
+            overrides.setdefault("created", []).append({
                 "id": max_id,
-                "desc": str(row_dict.get("desc", row_dict.get("description", "")) or ""),
-                "category": str(row_dict.get("category", "") or ""),
-                "risk": str(row_dict.get("risk", "Medium") or "Medium"),
-                "feasibility": str(row_dict.get("feasibility", "Auto") or "Auto"),
-                "analysis": str(row_dict.get("analysis", "") or ""),
-                "module": str(row_dict.get("module", "") or ""),
-                "source": str(row_dict.get("source", "") or ""),
+                "desc": desc,
+                "category": _col(row_vals, headers, "category"),
+                "risk": risk,
+                "feasibility": feasibility,
+                "analysis": analysis,
+                "module": _col(row_vals, headers, "tally module", "module"),
+                "source": _col(row_vals, headers, "tally data source", "source"),
                 "active": True,
-            }
-            overrides.setdefault("created", []).append(new_check)
+            })
             added += 1
 
         save_overrides(overrides)
         return {"message": f"Imported {added} checks successfully"}
+    except HTTPException:
+        raise
     except ImportError:
         raise HTTPException(500, "openpyxl not installed")
     except Exception as e:

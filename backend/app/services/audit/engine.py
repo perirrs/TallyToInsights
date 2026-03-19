@@ -62,15 +62,22 @@ def _load_dataframes(dump_id: int, db: Session) -> dict:
     return {"df_v": df_v, "df_l": df_l, "df_vl": df_vl, "df_s": df_s}
 
 
-def run_audit(dump_id: int):
+def run_audit(dump_id: int, check_ids: set[int] | None = None):
+    """Run audit checks for a dump. If check_ids is given, only save results for those IDs."""
     db = SessionLocal()
     try:
         dump = db.query(DataDump).filter(DataDump.id == dump_id).first()
         if not dump or dump.status not in ("processed", "auditing"):
             return
 
-        # Clear previous audit results
-        db.query(AuditResult).filter(AuditResult.dump_id == dump_id).delete()
+        # Clear previous audit results (or only selected checks if filtering)
+        if check_ids:
+            from sqlalchemy import text as _text
+            for cid in check_ids:
+                db.execute(_text("DELETE FROM audit_results WHERE dump_id = :did AND check_id = :cid"),
+                           {"did": dump_id, "cid": cid})
+        else:
+            db.query(AuditResult).filter(AuditResult.dump_id == dump_id).delete()
         db.commit()
 
         data = _load_dataframes(dump_id, db)
@@ -118,6 +125,10 @@ def run_audit(dump_id: int):
             except Exception as e:
                 # Don't let one module failure break the rest
                 print(f"Audit module {module_name} failed: {e}")
+
+        # Filter to selected check IDs if provided
+        if check_ids:
+            all_results = [r for r in all_results if r.check_id in check_ids]
 
         # Persist results
         now = datetime.utcnow()

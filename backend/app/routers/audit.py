@@ -138,13 +138,16 @@ def get_check_detail(dump_id: int, check_id: int, db: Session = Depends(get_db),
 def rerun_audit(
     dump_id: int,
     background_tasks: BackgroundTasks,
+    body: dict = Body(default={}),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     dump = _get_dump(dump_id, db, user)
     if dump.status not in ("processed", "failed", "auditing"):
         raise HTTPException(400, "Dump must be processed before audit")
+    check_ids = body.get("check_ids")  # None = run all; list[int] = run only these
+    check_ids_set = set(check_ids) if check_ids else None
     dump.status = "auditing"
     db.commit()
-    background_tasks.add_task(run_audit, dump_id)
+    background_tasks.add_task(run_audit, dump_id, check_ids_set)
     return {"message": "Audit re-run started"}
