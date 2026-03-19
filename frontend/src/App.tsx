@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from './store/authStore'
 import Layout from './components/Layout/Layout'
@@ -16,6 +17,7 @@ import VouchersPage from './pages/Reports/Vouchers'
 import AuditPage from './pages/Audit/AuditDashboard'
 import CheckDetailPage from './pages/Audit/CheckDetail'
 import UsersPage from './pages/Users'
+import ActivationPage from './pages/Activation'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token)
@@ -24,6 +26,32 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  // null = checking, true = activated (or not in Electron), false = needs activation
+  const [activated, setActivated] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    if (window.electron) {
+      window.electron.isActivated().then(setActivated)
+    } else {
+      // Running in a browser (dev without Electron) — skip activation
+      setActivated(true)
+    }
+  }, [])
+
+  // Blank slate while we check activation status
+  if (activated === null) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  // Show activation screen (app.relaunch() is called on success — no routing needed)
+  if (!activated) {
+    return <ActivationPage />
+  }
+
   return (
     <BrowserRouter>
       <Routes>
