@@ -28,7 +28,9 @@ api.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401) {
       useAuthStore.getState().logout()
-      window.location.href = '/login'
+      // Use Vite's BASE_URL so the redirect works on GitHub Pages (/TallyToInsights/login)
+      // as well as local dev and Electron (/login)
+      window.location.href = `${import.meta.env.BASE_URL}login`
     }
     return Promise.reject(err)
   },
