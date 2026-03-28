@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>TallyToInsights</title>
+  <script>
+    // GitHub Pages serves this 404.html for all unknown paths.
+    // We encode the full URL into sessionStorage and redirect to index.html,
+    // where the SPA's router picks it up and renders the correct page.
+    // This makes refreshing or sharing deep links work correctly.
+    var path = window.location.pathname.replace('/TallyToInsights', '') || '/';
+    sessionStorage.setItem('spa_redirect', path + window.location.search + window.location.hash);
+    window.location.replace('/TallyToInsights/');
+  </script>
+</head>
+<body></body>
+</html>

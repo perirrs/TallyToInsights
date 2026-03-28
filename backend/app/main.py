@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import Base, engine
+from app.config import settings
 from app.routers import auth, companies, uploads, reports, audit, exports, audit_checks
 import app.models  # ensure all models are registered
 
@@ -9,14 +10,21 @@ Base.metadata.create_all(bind=engine)
 
 
 def _run_migrations():
-    """Safely add new columns to existing DBs without breaking old installs."""
+    """Safely add new columns to existing DBs without breaking old installs.
+    Works for both SQLite (PRAGMA) and PostgreSQL (IF NOT EXISTS)."""
     from sqlalchemy import text
+    dialect = engine.dialect.name
     with engine.connect() as conn:
-        existing = {row[1] for row in conn.execute(text("PRAGMA table_info(data_dumps)")).fetchall()}
-        if "progress_pct" not in existing:
-            conn.execute(text("ALTER TABLE data_dumps ADD COLUMN progress_pct INTEGER DEFAULT 0"))
-        if "progress_stage" not in existing:
-            conn.execute(text("ALTER TABLE data_dumps ADD COLUMN progress_stage TEXT"))
+        if dialect == "sqlite":
+            existing = {row[1] for row in conn.execute(text("PRAGMA table_info(data_dumps)")).fetchall()}
+            if "progress_pct" not in existing:
+                conn.execute(text("ALTER TABLE data_dumps ADD COLUMN progress_pct INTEGER DEFAULT 0"))
+            if "progress_stage" not in existing:
+                conn.execute(text("ALTER TABLE data_dumps ADD COLUMN progress_stage TEXT"))
+        else:
+            # PostgreSQL supports IF NOT EXISTS — safe even if columns already exist
+            conn.execute(text("ALTER TABLE IF EXISTS data_dumps ADD COLUMN IF NOT EXISTS progress_pct INTEGER DEFAULT 0"))
+            conn.execute(text("ALTER TABLE IF EXISTS data_dumps ADD COLUMN IF NOT EXISTS progress_stage TEXT"))
         conn.commit()
 
 
@@ -30,9 +38,10 @@ app = FastAPI(
     redoc_url="/api/redoc",
 )
 
+_cors_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",")]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # configure per environment
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

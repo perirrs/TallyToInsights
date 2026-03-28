@@ -76,8 +76,11 @@ export default function App() {
     return <ActivationPage />
   }
 
+  // VITE_BASE_PATH is "/TallyToInsights" on GitHub Pages, "" everywhere else
+  const basePath = import.meta.env.VITE_BASE_PATH || ''
+
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={basePath}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route
