@@ -1,34 +1,47 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import Base, engine
 from app.config import settings
 from app.routers import auth, companies, uploads, reports, audit, exports, audit_checks
 import app.models  # ensure all models are registered
+import logging
 
-# Create tables (new installs)
-Base.metadata.create_all(bind=engine)
+logger = logging.getLogger("tallytoinsights")
 
 
-def _run_migrations():
-    """Safely add new columns to existing DBs without breaking old installs.
-    Works for both SQLite (PRAGMA) and PostgreSQL (IF NOT EXISTS)."""
+def _init_db():
+    """Create tables and run migrations. Wrapped in try/except so a DB outage
+    doesn't prevent the process from starting (health endpoint stays reachable)."""
     from sqlalchemy import text
-    dialect = engine.dialect.name
-    with engine.connect() as conn:
-        if dialect == "sqlite":
-            existing = {row[1] for row in conn.execute(text("PRAGMA table_info(data_dumps)")).fetchall()}
-            if "progress_pct" not in existing:
-                conn.execute(text("ALTER TABLE data_dumps ADD COLUMN progress_pct INTEGER DEFAULT 0"))
-            if "progress_stage" not in existing:
-                conn.execute(text("ALTER TABLE data_dumps ADD COLUMN progress_stage TEXT"))
-        else:
-            # PostgreSQL supports IF NOT EXISTS — safe even if columns already exist
-            conn.execute(text("ALTER TABLE IF EXISTS data_dumps ADD COLUMN IF NOT EXISTS progress_pct INTEGER DEFAULT 0"))
-            conn.execute(text("ALTER TABLE IF EXISTS data_dumps ADD COLUMN IF NOT EXISTS progress_stage TEXT"))
-        conn.commit()
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as exc:
+        logger.error("create_all failed (DB may not be ready): %s", exc)
+        return
+
+    try:
+        dialect = engine.dialect.name
+        with engine.connect() as conn:
+            if dialect == "sqlite":
+                existing = {row[1] for row in conn.execute(text("PRAGMA table_info(data_dumps)")).fetchall()}
+                if "progress_pct" not in existing:
+                    conn.execute(text("ALTER TABLE data_dumps ADD COLUMN progress_pct INTEGER DEFAULT 0"))
+                if "progress_stage" not in existing:
+                    conn.execute(text("ALTER TABLE data_dumps ADD COLUMN progress_stage TEXT"))
+            else:
+                conn.execute(text("ALTER TABLE IF EXISTS data_dumps ADD COLUMN IF NOT EXISTS progress_pct INTEGER DEFAULT 0"))
+                conn.execute(text("ALTER TABLE IF EXISTS data_dumps ADD COLUMN IF NOT EXISTS progress_stage TEXT"))
+            conn.commit()
+    except Exception as exc:
+        logger.error("Migration failed (non-fatal): %s", exc)
 
 
-_run_migrations()
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    _init_db()
+    yield
+
 
 app = FastAPI(
     title="TallyToInsights API",
@@ -36,6 +49,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
+    lifespan=lifespan,
 )
 
 _cors_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",")]
