@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script>
+    // GitHub Pages SPA fix: redirect any deep link back through index.html
+    var path = window.location.pathname;
+    var base = '/TallyToInsights';
+    var rest = path.replace(base, '') || '/';
+    sessionStorage.setItem('spa_redirect', rest + window.location.search + window.location.hash);
+    window.location.replace(base + '/');
+  </script>
+</head>
+<body></body>
+</html>

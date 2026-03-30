@@ -1,10 +1,14 @@
 import axios from 'axios'
 import { useAuthStore } from '../store/authStore'
 
-// Packaged Electron loads from file:// → call localhost directly
-// Dev mode uses the Vite proxy at /api
+// Priority:
+//  1. VITE_API_URL at build time  → GitHub Pages pointing at Railway backend
+//  2. file:// protocol            → packaged Electron → localhost:8000
+//  3. otherwise                   → Vite dev proxy at /api
 const baseURL =
-  typeof window !== 'undefined' && window.location.protocol === 'file:'
+  import.meta.env.VITE_API_URL
+    ? `${import.meta.env.VITE_API_URL}/api`
+    : typeof window !== 'undefined' && window.location.protocol === 'file:'
     ? 'http://127.0.0.1:8000/api'
     : '/api'
 
@@ -24,7 +28,7 @@ api.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401) {
       useAuthStore.getState().logout()
-      window.location.href = '/login'
+      window.location.href = `${import.meta.env.BASE_URL}login`
     }
     return Promise.reject(err)
   },
