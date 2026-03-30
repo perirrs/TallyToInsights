@@ -1,10 +1,9 @@
 import axios from 'axios'
 import { useAuthStore } from '../store/authStore'
 
-// Priority:
-//  1. VITE_API_URL at build time  → GitHub Pages pointing at Railway backend
-//  2. file:// protocol            → packaged Electron → localhost:8000
-//  3. otherwise                   → Vite dev proxy at /api
+// VITE_API_URL → Azure App Service backend URL (set as GitHub secret)
+// file:// protocol → packaged Electron → localhost:8000
+// otherwise → Vite dev proxy
 const baseURL =
   import.meta.env.VITE_API_URL
     ? `${import.meta.env.VITE_API_URL}/api`
@@ -28,7 +27,7 @@ api.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401) {
       useAuthStore.getState().logout()
-      window.location.href = `${import.meta.env.BASE_URL}login`
+      window.location.href = '/login'
     }
     return Promise.reject(err)
   },

@@ -76,10 +76,8 @@ export default function App() {
     return <ActivationPage />
   }
 
-  const basePath = import.meta.env.VITE_BASE_PATH || ''
-
   return (
-    <BrowserRouter basename={basePath}>
+    <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route
