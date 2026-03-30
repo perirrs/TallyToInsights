@@ -232,7 +232,7 @@ export default function AuditDashboardPage() {
                   </Link>
                 </td>
                 <td className="px-4 py-2.5 text-xs text-gray-500">{r.category}</td>
-                <td className="px-4 py-2.5"><RiskBadge level={r.risk_level} /></td>
+                <td className="px-4 py-2.5"><RiskBadge level={r.risk_level as any} /></td>
                 <td className="px-4 py-2.5"><StatusBadge status={r.status} /></td>
                 <td className="px-4 py-2.5 text-right text-xs text-gray-600">{r.finding_count}</td>
                 <td className="px-4 py-2.5 text-right text-xs font-medium text-red-700">

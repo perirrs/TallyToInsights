@@ -5,9 +5,14 @@
  */
 import { useState } from 'react'
 import { X, ChevronRight, Search, RotateCcw } from 'lucide-react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import api from '../api/client'
 import VoucherModal from './VoucherModal'
+
+interface DrillPage {
+  items: any[]
+  total: number
+}
 
 const INR = (v: number) =>
   new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(v)
@@ -47,7 +52,7 @@ export default function DrillVouchers({
     ...(search ? { ledger_name: search } : {}),
   }
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading } = useQuery<DrillPage>({
     queryKey: ['drill-vouchers', dumpId, activeFilters, page],
     queryFn: () =>
       api
@@ -59,7 +64,7 @@ export default function DrillVouchers({
           },
         })
         .then((r) => r.data),
-    keepPreviousData: true,
+    placeholderData: keepPreviousData,
   })
 
   const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 1

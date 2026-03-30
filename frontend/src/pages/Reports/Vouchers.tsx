@@ -7,7 +7,13 @@
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ChevronLeft, Search, RotateCcw, FileText } from 'lucide-react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
+
+interface VoucherPage {
+  items: any[]
+  total: number
+  page_size: number
+}
 import api from '../../api/client'
 import PageHeader from '../../components/UI/PageHeader'
 import VoucherModal from '../../components/VoucherModal'
@@ -46,7 +52,7 @@ export default function VouchersPage() {
   const [dateTo, setDateTo] = useState('')
   const [selectedId, setSelectedId] = useState<number | null>(null)
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading } = useQuery<VoucherPage>({
     queryKey: ['vouchers', dumpId, page, vtype, party, minAmt, maxAmt, dateFrom, dateTo],
     queryFn: () =>
       api.get(`/reports/${dumpId}/vouchers`, {
@@ -60,7 +66,7 @@ export default function VouchersPage() {
           date_to:       dateTo   || undefined,
         },
       }).then((r) => r.data),
-    keepPreviousData: true,
+    placeholderData: keepPreviousData,
   })
 
   const resetFilters = () => {

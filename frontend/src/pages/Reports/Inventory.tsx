@@ -31,13 +31,13 @@ export default function InventoryPage() {
   const [groupFilter, setGroupFilter] = useState('')
   const [sortBy, setSortBy] = useState<'value' | 'qty'>('value')
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading } = useQuery<any>({
     queryKey: ['inventory', dumpId],
     queryFn: () => api.get(`/reports/${dumpId}/inventory`).then((r) => r.data),
   })
 
-  const allGroups: string[] = useMemo(
-    () => [...new Set((data?.items || []).map((i: any) => i.group).filter(Boolean))],
+  const allGroups = useMemo(
+    () => Array.from(new Set<string>((data?.items || []).map((i: any) => i.group).filter(Boolean))),
     [data]
   )
 
@@ -66,13 +66,13 @@ export default function InventoryPage() {
   if (!data) return null
 
   // Group-wise value chart (top 10)
-  const groupChart = Object.entries(
+  const groupChart = (Object.entries(
     filtered.reduce((acc: Record<string, number>, i: any) => {
       const g = i.group || 'Ungrouped'
       acc[g] = (acc[g] || 0) + (i.closing_value || 0)
       return acc
-    }, {})
-  )
+    }, {} as Record<string, number>)
+  ) as [string, number][])
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10)
     .map(([name, value]) => ({ name, value }))

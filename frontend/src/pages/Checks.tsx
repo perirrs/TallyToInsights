@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import api from '../api/client'
 import PageHeader from '../components/UI/PageHeader'
 import { Plus, Pencil, Trash2, Upload, Search, ChevronLeft, ChevronRight, CheckSquare, Square, Loader } from 'lucide-react'
@@ -48,14 +48,14 @@ export default function ChecksPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading } = useQuery<{ items: AuditCheck[]; total: number; categories: string[] }>({
     queryKey: ['audit-checks', page, search, filterCategory, filterRisk],
     queryFn: () =>
       api.get('/audit-checks/', {
         params: { page, page_size: PAGE_SIZE, search: search || undefined, category: filterCategory || undefined, risk: filterRisk || undefined },
       }).then((r) => r.data),
-    keepPreviousData: true,
-  } as any)
+    placeholderData: keepPreviousData,
+  })
 
   const createMutation = useMutation({
     mutationFn: (d: typeof form) => api.post('/audit-checks/', d),
