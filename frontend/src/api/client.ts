@@ -1,13 +1,10 @@
 import axios from 'axios'
 import { useAuthStore } from '../store/authStore'
 
-// VITE_API_URL → Azure App Service backend URL (set as GitHub secret)
-// file:// protocol → packaged Electron → localhost:8000
-// otherwise → Vite dev proxy
+// Packaged Electron loads from file:// → call localhost directly
+// Dev mode uses the Vite proxy at /api
 const baseURL =
-  import.meta.env.VITE_API_URL
-    ? `${import.meta.env.VITE_API_URL}/api`
-    : typeof window !== 'undefined' && window.location.protocol === 'file:'
+  typeof window !== 'undefined' && window.location.protocol === 'file:'
     ? 'http://127.0.0.1:8000/api'
     : '/api'
 
