@@ -112,8 +112,21 @@ function getAppUrl(path_ = '') {
 async function main() {
   await app.whenReady();
 
-  // Disable default menu in production
-  if (!isDev) Menu.setApplicationMenu(null);
+  // Always remove the default browser-style menu (File/Edit/View/Window/Help)
+  Menu.setApplicationMenu(null);
+
+  // Dev mode: poll backend in background so getDesktopToken() works for React
+  if (isDev) {
+    ;(async () => {
+      for (let i = 0; i < 30; i++) {
+        try {
+          const r = await fetch('http://127.0.0.1:8000/api/auth/desktop-auto-login', { method: 'POST' });
+          if (r.ok) { desktopToken = await r.json(); break; }
+        } catch (_) {}
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    })();
+  }
 
   // ── Step 1: Activation gate ────────────────────────────────────────────
   if (!isActivated()) {
