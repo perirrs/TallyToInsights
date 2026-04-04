@@ -1,21 +1,39 @@
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import api from '../../api/client'
 import PageHeader from '../../components/UI/PageHeader'
 import { RiskBadge, StatusBadge } from '../../components/UI/RiskBadge'
-import { ArrowLeft, ChevronLeft } from 'lucide-react'
+import DrillVouchers, { DrillFilters } from '../../components/DrillVouchers'
+import { ChevronLeft, ExternalLink } from 'lucide-react'
 
 const INR = (v: number) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(v)
 
+interface Drill { title: string; subtitle?: string; filters: DrillFilters }
+
 export default function CheckDetailPage() {
   const { dumpId, checkId } = useParams<{ dumpId: string; checkId: string }>()
   const navigate = useNavigate()
+  const [drill, setDrill] = useState<Drill | null>(null)
 
   const { data: check, isLoading } = useQuery({
     queryKey: ['audit-check', dumpId, checkId],
     queryFn: () => api.get(`/audit/${dumpId}/checks/${checkId}`).then((r) => r.data),
   })
+
+  function openFinding(f: any) {
+    const filters: DrillFilters = {}
+    if (f.voucher_no) filters.voucher_number = f.voucher_no
+    else if (f.party) filters.ledger_name = f.party
+    else if (f.ledger) filters.ledger_name = f.ledger
+    if (f.date) { filters.date_from = f.date; filters.date_to = f.date }
+    setDrill({
+      title: f.voucher_no ? `Voucher ${f.voucher_no}` : (f.party || f.ledger || 'Voucher Detail'),
+      subtitle: f.detail,
+      filters,
+    })
+  }
 
   if (isLoading) return <div className="p-6 text-gray-500">Loading...</div>
   if (!check) return null
@@ -52,9 +70,14 @@ export default function CheckDetailPage() {
 
       {check.findings?.length > 0 ? (
         <div className="card">
-          <h3 className="font-semibold text-gray-800 mb-4">
-            Findings ({check.findings.length}{check.finding_count > check.findings.length ? ` of ${check.finding_count}` : ''})
-          </h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-gray-800">
+              Findings ({check.findings.length}{check.finding_count > check.findings.length ? ` of ${check.finding_count}` : ''})
+            </h3>
+            <p className="text-xs text-gray-400 flex items-center gap-1">
+              <ExternalLink size={11} /> Click any row to view voucher detail
+            </p>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -64,17 +87,28 @@ export default function CheckDetailPage() {
                   <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-600 w-24">Date</th>
                   <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-600 w-40">Party</th>
                   <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-600 w-28">Amount</th>
+                  <th className="w-6" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {check.findings.map((f: any, i: number) => (
-                  <tr key={i} className="hover:bg-gray-50">
+                  <tr
+                    key={i}
+                    className="hover:bg-blue-50 cursor-pointer transition-colors"
+                    onClick={() => openFinding(f)}
+                    title="Click to view voucher detail"
+                  >
                     <td className="px-4 py-2.5 text-xs text-gray-800">{f.detail}</td>
-                    <td className="px-4 py-2.5 text-xs text-gray-500 font-mono">{f.voucher_no || '—'}</td>
+                    <td className="px-4 py-2.5 text-xs font-mono text-blue-600 underline decoration-dotted">
+                      {f.voucher_no || '—'}
+                    </td>
                     <td className="px-4 py-2.5 text-xs text-gray-500">{f.date || '—'}</td>
                     <td className="px-4 py-2.5 text-xs text-gray-700 truncate max-w-[160px]">{f.party || f.ledger || '—'}</td>
                     <td className="px-4 py-2.5 text-xs text-right font-medium text-gray-800">
                       {f.amount ? INR(f.amount) : '—'}
+                    </td>
+                    <td className="pr-3 text-gray-300">
+                      <ExternalLink size={12} />
                     </td>
                   </tr>
                 ))}
@@ -88,6 +122,17 @@ export default function CheckDetailPage() {
            check.status === 'skipped' ? 'This check was skipped (insufficient data or external dependency required).' :
            'No detailed findings available.'}
         </div>
+      )}
+
+      {/* Voucher drill-down panel */}
+      {drill && (
+        <DrillVouchers
+          dumpId={dumpId!}
+          title={drill.title}
+          subtitle={drill.subtitle}
+          filters={drill.filters}
+          onClose={() => setDrill(null)}
+        />
       )}
     </div>
   )

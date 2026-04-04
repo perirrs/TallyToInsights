@@ -155,6 +155,7 @@ def drill_vouchers(
     date_to: str | None = None,
     min_amount: float | None = None,
     narration: str | None = None,
+    voucher_number: str | None = None,
     page: int = 1,
     page_size: int = 30,
     db: Session = Depends(get_db),
@@ -186,6 +187,8 @@ def drill_vouchers(
         q = q.filter(Voucher.amount >= min_amount)
     if narration:
         q = q.filter(Voucher.narration.ilike(f"%{narration}%"))
+    if voucher_number:
+        q = q.filter(Voucher.voucher_number.ilike(f"%{voucher_number}%"))
 
     total = q.count()
     items = q.order_by(Voucher.date.desc()).offset((page - 1) * page_size).limit(page_size).all()

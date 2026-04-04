@@ -1,18 +1,26 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ChevronLeft } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import api from '../api/client'
 import KPICard from '../components/UI/KPICard'
 import { RiskBadge } from '../components/UI/RiskBadge'
+import DrillVouchers, { DrillFilters } from '../components/DrillVouchers'
 import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
 import {
   TrendingUp, TrendingDown, DollarSign, Shield, AlertTriangle,
   FileText, BarChart3, Download, ArrowRight,
 } from 'lucide-react'
+
+/** Convert "YYYY-MM" string to { date_from, date_to } for drill filters */
+function monthRange(ym: string) {
+  const [y, m] = ym.split('-').map(Number)
+  const last = new Date(y, m, 0).getDate()
+  return { date_from: `${ym}-01`, date_to: `${ym}-${String(last).padStart(2, '0')}` }
+}
 
 const INR = (v: number) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(v)
@@ -21,9 +29,12 @@ const COLORS = ['#1A56DB', '#16A34A', '#EA580C', '#7C3AED', '#DB2777', '#0891B2'
 const RISK_COLORS: Record<string, string> = { High: '#DC2626', Medium: '#D97706', Low: '#2563EB' }
 const STATUS_COLORS: Record<string, string> = { Pass: '#16A34A', Fail: '#DC2626', Warning: '#D97706', Skipped: '#9CA3AF' }
 
+interface Drill { title: string; subtitle?: string; filters: DrillFilters }
+
 export default function DashboardPage() {
   const { dumpId } = useParams<{ dumpId: string }>()
   const navigate = useNavigate()
+  const [drill, setDrill] = useState<Drill | null>(null)
 
   const { data: kpis, isLoading } = useQuery({
     queryKey: ['dashboard', dumpId],
@@ -128,45 +139,63 @@ export default function DashboardPage() {
 
       {/* KPI Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 mb-6">
-        <KPICard title="Revenue" value={INR(kpis.revenue)} color="blue" icon={<TrendingUp size={18} />} />
-        <KPICard title="Expenses" value={INR(kpis.expenses)} color="orange" icon={<TrendingDown size={18} />} />
+        <KPICard title="Revenue" value={INR(kpis.revenue)} color="blue" icon={<TrendingUp size={18} />}
+          onClick={() => setDrill({ title: 'Revenue Vouchers', filters: { voucher_type: 'Sales' } })} />
+        <KPICard title="Expenses" value={INR(kpis.expenses)} color="orange" icon={<TrendingDown size={18} />}
+          onClick={() => setDrill({ title: 'Expense Vouchers', filters: { voucher_type: 'Purchase' } })} />
         <KPICard title="Net Profit" value={INR(kpis.net_profit)}
           subtitle={`${kpis.net_margin_pct?.toFixed(1)}% margin`}
           color={kpis.net_profit >= 0 ? 'green' : 'red'} />
-        <KPICard title="Cash Position" value={INR(kpis.cash_position)} color="green" icon={<DollarSign size={18} />} />
+        <KPICard title="Cash Position" value={INR(kpis.cash_position)} color="green" icon={<DollarSign size={18} />}
+          onClick={() => setDrill({ title: 'Cash & Bank Vouchers', filters: { voucher_type: 'Receipt' } })} />
         <KPICard title="Audit Health" value={`${kpis.audit_health_score}%`}
           subtitle={`${kpis.audit_failures} failures`}
           color={kpis.audit_health_score >= 80 ? 'green' : kpis.audit_health_score >= 60 ? 'orange' : 'red'}
           icon={<Shield size={18} />} />
-        <KPICard title="Receivables" value={INR(kpis.receivables)} color="purple" />
-        <KPICard title="Payables" value={INR(kpis.payables)} color="orange" />
+        <KPICard title="Receivables" value={INR(kpis.receivables)} color="purple"
+          onClick={() => setDrill({ title: 'Receivable Vouchers', filters: { voucher_type: 'Sales' } })} />
+        <KPICard title="Payables" value={INR(kpis.payables)} color="orange"
+          onClick={() => setDrill({ title: 'Payable Vouchers', filters: { voucher_type: 'Purchase' } })} />
         <KPICard title="Amount at Risk" value={INR(kpis.amount_at_risk)} color="red" icon={<AlertTriangle size={18} />} />
-        <KPICard title="Total Vouchers" value={kpis.total_vouchers?.toLocaleString()} color="blue" />
+        <KPICard title="Total Vouchers" value={kpis.total_vouchers?.toLocaleString()} color="blue"
+          onClick={() => setDrill({ title: 'All Vouchers', filters: {} })} />
         <KPICard title="High Risk Issues" value={kpis.audit_high_risk} color="red" />
       </div>
 
       {/* Row 1: Monthly Revenue + Voucher Distribution */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <div className="card">
-          <h3 className="font-semibold text-gray-800 mb-4 text-sm">Monthly Revenue</h3>
+          <h3 className="font-semibold text-gray-800 mb-1 text-sm">Monthly Revenue</h3>
+          <p className="text-xs text-gray-400 mb-3">Click a bar to see vouchers for that month</p>
           <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={kpis.monthly_revenue || []}>
+            <BarChart data={kpis.monthly_revenue || []} style={{ cursor: 'pointer' }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}K`} />
               <Tooltip formatter={(v: number) => INR(v)} />
-              <Bar dataKey="revenue" fill="#1A56DB" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="revenue" fill="#1A56DB" radius={[4, 4, 0, 0]}
+                onClick={(data) => {
+                  if (!data?.month) return
+                  setDrill({ title: `Revenue — ${data.month}`, filters: { voucher_type: 'Sales', ...monthRange(data.month) } })
+                }}
+              />
             </BarChart>
           </ResponsiveContainer>
         </div>
 
         <div className="card">
-          <h3 className="font-semibold text-gray-800 mb-4 text-sm">Voucher Type Distribution</h3>
+          <h3 className="font-semibold text-gray-800 mb-1 text-sm">Voucher Type Distribution</h3>
+          <p className="text-xs text-gray-400 mb-3">Click a slice to see those vouchers</p>
           <ResponsiveContainer width="100%" height={200}>
             <PieChart>
               <Pie data={kpis.voucher_breakdown || []} dataKey="count" nameKey="type"
                 cx="50%" cy="50%" outerRadius={75}
-                label={({ type, count }) => `${type}: ${count}`} labelLine={false}>
+                label={({ type, count }) => `${type}: ${count}`} labelLine={false}
+                style={{ cursor: 'pointer' }}
+                onClick={(data) => {
+                  if (!data?.type) return
+                  setDrill({ title: `${data.type} Vouchers`, subtitle: `${data.count} entries`, filters: { voucher_type: data.type } })
+                }}>
                 {(kpis.voucher_breakdown || []).map((_: any, i: number) => (
                   <Cell key={i} fill={COLORS[i % COLORS.length]} />
                 ))}
@@ -261,6 +290,17 @@ export default function DashboardPage() {
             ))}
           </div>
         </div>
+      )}
+
+      {/* Voucher drill-down panel */}
+      {drill && (
+        <DrillVouchers
+          dumpId={dumpId!}
+          title={drill.title}
+          subtitle={drill.subtitle}
+          filters={drill.filters}
+          onClose={() => setDrill(null)}
+        />
       )}
     </div>
   )

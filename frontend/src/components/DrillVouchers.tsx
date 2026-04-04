@@ -24,6 +24,7 @@ export interface DrillFilters {
   date_to?: string
   min_amount?: number
   narration?: string
+  voucher_number?: string
 }
 
 interface DrillVouchersProps {

@@ -7,6 +7,7 @@ interface KPICardProps {
   icon?: React.ReactNode
   trend?: 'up' | 'down' | 'neutral'
   color?: 'blue' | 'green' | 'red' | 'orange' | 'purple'
+  onClick?: () => void
 }
 
 const colorMap = {
@@ -18,10 +19,13 @@ const colorMap = {
 }
 
 export default function KPICard({
-  title, value, subtitle, icon, color = 'blue',
+  title, value, subtitle, icon, color = 'blue', onClick,
 }: KPICardProps) {
   return (
-    <div className={clsx('rounded-xl border p-5 flex flex-col gap-2', colorMap[color])}>
+    <div
+      className={clsx('rounded-xl border p-5 flex flex-col gap-2', colorMap[color], onClick && 'cursor-pointer hover:brightness-95 transition-all')}
+      onClick={onClick}
+    >
       <div className="flex items-start justify-between">
         <p className="text-xs font-semibold uppercase tracking-wide opacity-70">{title}</p>
         {icon && <div className="opacity-60">{icon}</div>}
