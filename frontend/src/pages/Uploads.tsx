@@ -193,7 +193,6 @@ export default function UploadsPage() {
                 Uploading {uploadState.current} of {uploadState.total}…
               </p>
               <p className="text-xs text-gray-500 max-w-xs truncate">{uploadState.currentName}</p>
-              {/* Progress bar */}
               <div className="w-48 h-1.5 bg-brand-100 rounded-full overflow-hidden">
                 <div
                   className="h-full bg-brand-500 rounded-full transition-all duration-300"
@@ -207,12 +206,34 @@ export default function UploadsPage() {
               <p className="text-sm font-medium">
                 {isDragActive ? 'Drop files here' : 'Drag & drop files or click to select'}
               </p>
-              <p className="text-xs text-gray-400">
-                Tally: .1800, .TSF, .900 &nbsp;·&nbsp; Standard: .xml, .xlsx, .xls, .csv, .json
-              </p>
               <p className="text-xs text-gray-400">Select multiple files at once — each uploads as a separate entry</p>
             </div>
           )}
+        </div>
+
+        {/* Format guidance */}
+        <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
+          <div className="rounded-lg bg-green-50 border border-green-200 p-3">
+            <p className="font-semibold text-green-800 mb-1">✓ Produces full reports</p>
+            <p className="text-green-700">
+              <strong>.xml</strong> — Tally XML Export (recommended)<br />
+              <strong>.xlsx / .xls</strong> — Excel export from Tally<br />
+              <strong>.csv / .json</strong> — Tally data exports
+            </p>
+            <p className="text-green-600 mt-2 text-xs italic">
+              In Tally: Gateway → Export → Data → All Vouchers → XML
+            </p>
+          </div>
+          <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
+            <p className="font-semibold text-amber-800 mb-1">⚠ Stored only — no reports</p>
+            <p className="text-amber-700">
+              <strong>.1800 / .900</strong> — Tally internal binary files<br />
+              <strong>.tsf</strong> — Tally sync metadata files
+            </p>
+            <p className="text-amber-600 mt-2 text-xs italic">
+              These are Tally's internal storage files and cannot be parsed for financial data.
+            </p>
+          </div>
         </div>
 
         {/* Show rejected files */}
@@ -281,6 +302,16 @@ export default function UploadsPage() {
                       <button onClick={() => navigate(`/dumps/${dump.id}/dashboard`)} className="btn-primary text-xs flex items-center gap-1">
                         <BarChart3 size={12} /> View Reports
                       </button>
+                    )}
+                    {dump.status === 'processed' && dump.voucher_count === 0 && dump.file_format === 'tally_native' && (
+                      <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded" title="Binary Tally file — export as XML from Tally for reports">
+                        No data — binary format
+                      </span>
+                    )}
+                    {dump.status === 'processed' && dump.voucher_count === 0 && dump.file_format === 'xml' && (
+                      <span className="text-xs text-gray-500" title="No vouchers found in this file">
+                        No financial data in file
+                      </span>
                     )}
                     {dump.status === 'processing' && (
                       <div className="text-right min-w-[160px]">

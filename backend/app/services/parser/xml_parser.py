@@ -60,7 +60,12 @@ def _attr(el, *attrs, default: str = "") -> str:
 
 
 def _parse_amount(val: str) -> float:
-    """Parse Tally amount strings like '1,23,456.78 Dr' or '-5000.00 Cr'."""
+    """Parse Tally amount strings like '1,23,456.78 Dr' or '-5000.00 Cr'.
+
+    Tally sometimes writes both a negative sign AND a 'Cr' suffix.
+    Rule: Cr always means credit (negative), Dr always means debit (positive),
+    regardless of any leading minus sign.
+    """
     if not val:
         return 0.0
     val = val.replace(",", "").strip()
@@ -71,7 +76,7 @@ def _parse_amount(val: str) -> float:
     elif val.endswith(" Dr"):
         val = val[:-3].strip()
     try:
-        result = float(val)
+        result = abs(float(val))   # always use absolute value; suffix decides sign
         return -result if negative else result
     except ValueError:
         return 0.0
