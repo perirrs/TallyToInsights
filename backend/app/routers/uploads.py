@@ -15,7 +15,14 @@ from app.tasks.process_dump import process_dump_background
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
 
-ALLOWED_EXTENSIONS = {".xml", ".xlsx", ".xls", ".csv", ".json"}
+ALLOWED_EXTENSIONS = {
+    # Tally native binary data files
+    ".1800", ".900",
+    # Tally Synchronization Format (XML-based)
+    ".tsf",
+    # Standard export formats
+    ".xml", ".xlsx", ".xls", ".csv", ".json",
+}
 
 
 @router.post("/{company_id}", response_model=DumpOut, status_code=201)
@@ -52,7 +59,15 @@ async def upload_dump(
     with open(file_path, "wb") as f:
         f.write(content)
 
-    fmt_map = {".xml": "xml", ".xlsx": "excel", ".xls": "excel", ".csv": "csv", ".json": "json"}
+    fmt_map = {
+        ".xml": "xml",
+        ".xlsx": "excel", ".xls": "excel",
+        ".csv": "csv",
+        ".json": "json",
+        ".tsf": "xml",           # TSF is XML-based
+        ".1800": "tally_native", # Tally binary data
+        ".900": "tally_native",  # Older Tally binary data
+    }
 
     dump = DataDump(
         company_id=company_id,

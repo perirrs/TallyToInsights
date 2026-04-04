@@ -54,7 +54,10 @@ def parse_dump(dump_id: int):
         dump.voucher_count = n_v
         dump.ledger_count = n_l
         dump.progress_pct = 100
-        dump.progress_stage = f"Done — {n_l:,} ledgers, {n_v:,} vouchers"
+        if dump.file_format == "tally_native":
+            dump.progress_stage = "Stored — Tally binary file (reports require XML export)"
+        else:
+            dump.progress_stage = f"Done — {n_l:,} ledgers, {n_v:,} vouchers"
         if result.period_from and not dump.period_from:
             dump.period_from = result.period_from
         if result.period_to and not dump.period_to:
@@ -91,6 +94,10 @@ def _parse_file(file_path: str, fmt: str) -> ParseResult:
     elif fmt == "json":
         from app.services.parser.json_parser import parse_json
         return parse_json(file_path)
+    elif fmt == "tally_native":
+        # Tally binary (.1800 / .900) — file is stored; structured parsing not yet implemented.
+        # Return empty result so the dump is saved and visible in the UI.
+        return ParseResult(ledgers=[], vouchers=[], stock_items=[])
     else:
         raise ValueError(f"Unsupported format: {fmt}")
 
