@@ -1,23 +1,27 @@
 """
-Excel parser for Tally data exports.
-Handles multiple common formats:
-  1. Day Book export (Sheet: Day Book / Vouchers)
-  2. Ledger-wise export (Sheet: Ledger)
-  3. Trial Balance (Sheet: Trial Balance)
-  4. Stock Summary (Sheet: Stock Summary)
+Excel / CSV parser for Tally data exports.
 
-We auto-detect columns by header names.
+Handles:
+  1. Day Book — one or more rows per voucher (Dr/Cr lines in separate rows)
+  2. Trial Balance — ledger-wise opening/closing balances
+  3. Ledger Report — per-ledger transaction history
+  4. Stock Summary — item-wise opening/closing stock
 """
 import pandas as pd
 from datetime import date, datetime
 from .normalize import ParseResult, NLedger, NVoucher, NVoucherLine, NStockItem
 
 
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
 def _safe_float(val) -> float:
     try:
         if pd.isna(val):
             return 0.0
-        return float(str(val).replace(",", "").strip())
+    except (TypeError, ValueError):
+        pass
+    try:
+        return float(str(val).replace(",", "").replace("(", "-").replace(")", "").strip())
     except Exception:
         return 0.0
 
@@ -30,12 +34,15 @@ def _safe_date(val) -> date | None:
             return None
     except (TypeError, ValueError):
         pass
-    if isinstance(val, (date, datetime)):
-        return val.date() if isinstance(val, datetime) else val
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, date):
+        return val
     s = str(val).strip()
     if not s or s.lower() in ("nan", "nat", "none", ""):
         return None
-    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%b-%Y", "%d %b %Y", "%Y%m%d"):
+    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%b-%Y",
+                "%d %b %Y", "%Y%m%d", "%d-%b-%y", "%d/%m/%y"):
         try:
             return datetime.strptime(s, fmt).date()
         except ValueError:
@@ -43,136 +50,168 @@ def _safe_date(val) -> date | None:
     return None
 
 
-def _find_header_row(df: pd.DataFrame, keywords: list[str]) -> int:
-    for i in range(min(10, len(df))):
-        vals = [str(v).lower().strip() for v in df.iloc[i].values if str(v) not in ("nan", "None", "")]
-        joined = " ".join(vals)
-        if sum(1 for k in keywords if k in joined) >= max(1, len(keywords) // 2 + 1):
+def _normalize_col(cols) -> list[str]:
+    return [str(c).lower().strip()
+            .replace(" ", "_").replace("/", "_").replace(".", "_") for c in cols]
+
+
+def _find_col(df_cols: list[str], *keys: str) -> str | None:
+    for k in keys:
+        for c in df_cols:
+            if k in c:
+                return c
+    return None
+
+
+def _find_header_row(df_raw: pd.DataFrame, keywords: list[str]) -> int:
+    for i in range(min(15, len(df_raw))):
+        vals = " ".join(
+            str(v).lower() for v in df_raw.iloc[i].values
+            if str(v) not in ("nan", "None", "")
+        )
+        if sum(1 for k in keywords if k in vals) >= max(1, len(keywords) // 2):
             return i
     return 0
 
 
-def _normalize_col(cols):
-    return [str(c).lower().strip().replace(" ", "_").replace("/", "_") for c in cols]
-
+# ── Main entry ────────────────────────────────────────────────────────────────
 
 def parse_excel(file_path: str) -> ParseResult:
     result = ParseResult()
-    xl = pd.ExcelFile(file_path)
-    sheets = xl.sheet_names
+    try:
+        xl = pd.ExcelFile(file_path)
+    except Exception as e:
+        raise ValueError(f"Cannot open file: {e}")
 
-    for sheet in sheets:
-        df_raw = xl.parse(sheet, header=None, dtype=str)
-        if df_raw.empty:
+    for sheet in xl.sheet_names:
+        try:
+            df_raw = xl.parse(sheet, header=None, dtype=str)
+        except Exception:
+            continue
+        if df_raw.empty or len(df_raw) < 2:
             continue
 
-        # Detect sheet type from first 5 rows
-        first_rows = " ".join(
-            str(v).lower() for v in df_raw.iloc[:5].values.flatten()
+        # Detect sheet type from first 8 rows
+        first_text = " ".join(
+            str(v).lower() for v in df_raw.iloc[:8].values.flatten()
             if str(v) not in ("nan", "None", "")
         )
 
-        if any(k in first_rows for k in ["day book", "voucher", "daybook"]):
-            _parse_voucher_sheet(df_raw, result)
-        elif any(k in first_rows for k in ["trial balance", "trial_balance", "trialbalance"]):
+        if any(k in first_text for k in ("day book", "daybook", "voucher register")):
+            _parse_daybook(df_raw, result)
+        elif any(k in first_text for k in ("trial balance",)):
             _parse_trial_balance(df_raw, result)
-        elif any(k in first_rows for k in ["ledger", "account"]):
-            _parse_ledger_sheet(df_raw, result)
-        elif any(k in first_rows for k in ["stock", "inventory", "item"]):
-            _parse_stock_sheet(df_raw, result)
+        elif any(k in first_text for k in ("stock summary", "stock item", "inventory summary")):
+            _parse_stock(df_raw, result)
+        elif any(k in first_text for k in ("ledger", "account statement")):
+            _parse_ledger(df_raw, result)
         else:
-            # Generic attempt — try as voucher sheet
-            _parse_voucher_sheet(df_raw, result)
+            # Unknown — try Day Book first, then Trial Balance
+            before = len(result.vouchers)
+            _parse_daybook(df_raw, result)
+            if len(result.vouchers) == before:
+                _parse_trial_balance(df_raw, result)
 
     return result
 
 
-def _parse_voucher_sheet(df_raw: pd.DataFrame, result: ParseResult):
-    # Find header row
-    header_row = 0
-    for i in range(min(10, len(df_raw))):
-        vals = [str(v).lower() for v in df_raw.iloc[i].values if str(v) not in ("nan", "None")]
-        if any(k in " ".join(vals) for k in ["date", "voucher", "amount", "dr", "cr"]):
-            header_row = i
-            break
+# ── Day Book / Voucher sheet ──────────────────────────────────────────────────
+
+def _parse_daybook(df_raw: pd.DataFrame, result: ParseResult):
+    """
+    Handles both single-row-per-voucher and multi-row formats.
+    In Tally Day Book, a voucher may span multiple rows with the same
+    voucher number — first row has the date/type, subsequent rows have
+    additional ledger lines (blank date = continuation).
+    """
+    header_row = _find_header_row(df_raw, ["date", "voucher", "amount"])
 
     df = df_raw.iloc[header_row:].reset_index(drop=True)
     df.columns = _normalize_col(df.iloc[0].values)
     df = df.iloc[1:].reset_index(drop=True)
     df = df.dropna(how="all")
 
-    col_map = {
-        "date": ["date", "voucher_date", "vch_date"],
-        "voucher_no": ["voucher_no", "vch_no", "number", "voucher_number", "no."],
-        "voucher_type": ["voucher_type", "vch_type", "type"],
-        "party": ["party_name", "party", "ledger_name", "account_name", "particulars"],
-        "debit": ["debit", "dr", "debit_amount"],
-        "credit": ["credit", "cr", "credit_amount"],
-        "amount": ["amount", "net_amount", "total"],
-        "narration": ["narration", "description", "remarks", "details"],
-    }
-
-    def find_col(keys):
-        for k in keys:
-            matches = [c for c in df.columns if k in c]
-            if matches:
-                return matches[0]
-        return None
-
-    date_col = find_col(col_map["date"])
-    vno_col = find_col(col_map["voucher_no"])
-    vtype_col = find_col(col_map["voucher_type"])
-    party_col = find_col(col_map["party"])
-    dr_col = find_col(col_map["debit"])
-    cr_col = find_col(col_map["credit"])
-    amt_col = find_col(col_map["amount"])
-    nar_col = find_col(col_map["narration"])
+    cols = list(df.columns)
+    date_col   = _find_col(cols, "date", "vch_date", "voucher_date")
+    vno_col    = _find_col(cols, "vch_no", "voucher_no", "voucher_number", "no_")
+    vtype_col  = _find_col(cols, "voucher_type", "vch_type", "type")
+    party_col  = _find_col(cols, "party_name", "party", "particulars",
+                            "ledger_name", "account_name", "name")
+    dr_col     = _find_col(cols, "debit", "_dr", "dr_")
+    cr_col     = _find_col(cols, "credit", "_cr", "cr_")
+    amt_col    = _find_col(cols, "amount", "net_amount", "total_amount")
+    nar_col    = _find_col(cols, "narration", "description", "remarks")
 
     if not date_col:
         return
 
-    dates = []
-    # Use to_dict('records') — 3-5x faster than iterrows
-    for row in df.to_dict("records"):
+    # Build vouchers by grouping rows with same voucher number
+    # (Tally's multi-row Day Book format)
+    pending: dict | None = None
+    dates: list[date] = []
+
+    def flush():
+        nonlocal pending
+        if pending:
+            result.vouchers.append(NVoucher(**pending))
+            dates.append(pending["date"])
+        pending = None
+
+    rows = df.to_dict("records")
+
+    for row in rows:
         d = _safe_date(row.get(date_col))
-        if not d:
-            continue
+        vno = str(row.get(vno_col, "")).strip() if vno_col else ""
+        vno = "" if vno in ("nan", "None") else vno
+        vtype = str(row.get(vtype_col, "")).strip() if vtype_col else ""
+        vtype = "" if vtype in ("nan", "None") else vtype
+        party = str(row.get(party_col, "")).strip() if party_col else ""
+        party = "" if party in ("nan", "None") else party
+        narration = str(row.get(nar_col, "")).strip() if nar_col else ""
+        narration = "" if narration in ("nan", "None") else narration
 
         dr = _safe_float(row.get(dr_col, 0)) if dr_col else 0
         cr = _safe_float(row.get(cr_col, 0)) if cr_col else 0
-        amount = _safe_float(row.get(amt_col, 0)) if amt_col else max(dr, cr)
-        if amount == 0:
-            amount = max(dr, cr)
+        amt = _safe_float(row.get(amt_col, 0)) if amt_col else 0
 
-        vtype = str(row.get(vtype_col, "Journal")).strip() if vtype_col else "Journal"
-        if not vtype or vtype in ("nan", "None", ""):
-            vtype = "Journal"
+        # A new voucher starts when we see a date (or a new voucher number)
+        is_new = d is not None
 
-        party = str(row.get(party_col, "")).strip() if party_col else ""
-        if party in ("nan", "None"):
-            party = ""
+        if is_new:
+            flush()
+            amount = amt or max(dr, cr)
+            lines = []
+            if party and (dr > 0 or cr > 0):
+                lines.append(NVoucherLine(
+                    ledger_name=party,
+                    amount=dr if dr > 0 else cr,
+                    is_debit=dr > 0,
+                ))
+            pending = dict(
+                voucher_type=vtype or "Journal",
+                date=d,
+                amount=amount,
+                voucher_number=vno,
+                party_ledger=party,
+                narration=narration,
+                lines=lines,
+            )
+        elif pending and party and (dr > 0 or cr > 0):
+            # Continuation row — add ledger line to current voucher
+            pending["lines"].append(NVoucherLine(
+                ledger_name=party,
+                amount=dr if dr > 0 else cr,
+                is_debit=dr > 0,
+            ))
+            # Update amount if this gives us a better figure
+            if pending["amount"] == 0:
+                pending["amount"] = dr if dr > 0 else cr
+            if not pending["party_ledger"] and party:
+                pending["party_ledger"] = party
+            if not pending["narration"] and narration:
+                pending["narration"] = narration
 
-        narration = str(row.get(nar_col, "")).strip() if nar_col else ""
-        if narration in ("nan", "None"):
-            narration = ""
-
-        lines = []
-        if dr > 0 and party:
-            lines.append(NVoucherLine(ledger_name=party, amount=dr, is_debit=True))
-        if cr > 0 and party:
-            lines.append(NVoucherLine(ledger_name=party, amount=cr, is_debit=False))
-
-        vch = NVoucher(
-            voucher_type=vtype,
-            date=d,
-            amount=amount,
-            voucher_number=str(row.get(vno_col, "")).strip() if vno_col else "",
-            party_ledger=party,
-            narration=narration,
-            lines=lines,
-        )
-        result.vouchers.append(vch)
-        dates.append(d)
+    flush()
 
     if dates:
         if not result.period_from or min(dates) < result.period_from:
@@ -181,50 +220,52 @@ def _parse_voucher_sheet(df_raw: pd.DataFrame, result: ParseResult):
             result.period_to = max(dates)
 
 
+# ── Trial Balance ─────────────────────────────────────────────────────────────
+
 def _parse_trial_balance(df_raw: pd.DataFrame, result: ParseResult):
-    header_row = 0
-    for i in range(min(10, len(df_raw))):
-        vals = [str(v).lower() for v in df_raw.iloc[i].values if str(v) not in ("nan", "None")]
-        if any(k in " ".join(vals) for k in ["particulars", "ledger", "account", "name"]):
-            header_row = i
-            break
+    header_row = _find_header_row(df_raw, ["particulars", "ledger", "name", "account"])
 
     df = df_raw.iloc[header_row:].reset_index(drop=True)
     df.columns = _normalize_col(df.iloc[0].values)
     df = df.iloc[1:].reset_index(drop=True)
     df = df.dropna(subset=[df.columns[0]])
 
-    name_col = df.columns[0]
+    cols = list(df.columns)
+    name_col    = cols[0]
+    group_col   = _find_col(cols, "group", "parent", "category")
+    cl_dr_col   = _find_col(cols, "closing_dr", "cl__dr", "closing_debit")
+    cl_cr_col   = _find_col(cols, "closing_cr", "cl__cr", "closing_credit")
+    op_dr_col   = _find_col(cols, "opening_dr", "op__dr", "opening_debit")
+    op_cr_col   = _find_col(cols, "opening_cr", "op__cr", "opening_credit")
+    cl_bal_col  = _find_col(cols, "closing_balance", "closing_bal", "cl_bal")
+    op_bal_col  = _find_col(cols, "opening_balance", "opening_bal", "op_bal")
 
-    def find_col(keys):
-        for k in keys:
-            matches = [c for c in df.columns if k in c]
-            if matches:
-                return matches[0]
-        return None
-
-    closing_dr = find_col(["closing_dr", "closing_debit", "cl_dr"])
-    closing_cr = find_col(["closing_cr", "closing_credit", "cl_cr"])
-    opening_dr = find_col(["opening_dr", "opening_debit", "op_dr"])
-    opening_cr = find_col(["opening_cr", "opening_credit", "op_cr"])
-    group_col = find_col(["group", "parent", "category"])
-
+    seen: set[str] = set()
     for row in df.to_dict("records"):
         name = str(row[name_col]).strip()
-        if not name or name.lower() in ("nan", "none", "total", "grand total"):
+        if not name or name.lower() in ("nan", "none", "total", "grand total", ""):
             continue
+        if name in seen:
+            continue
+        seen.add(name)
 
         closing = 0.0
-        if closing_dr:
-            closing += _safe_float(row.get(closing_dr, 0))
-        if closing_cr:
-            closing -= _safe_float(row.get(closing_cr, 0))
+        if cl_bal_col:
+            closing = _safe_float(row.get(cl_bal_col, 0))
+        else:
+            if cl_dr_col:
+                closing += _safe_float(row.get(cl_dr_col, 0))
+            if cl_cr_col:
+                closing -= _safe_float(row.get(cl_cr_col, 0))
 
         opening = 0.0
-        if opening_dr:
-            opening += _safe_float(row.get(opening_dr, 0))
-        if opening_cr:
-            opening -= _safe_float(row.get(opening_cr, 0))
+        if op_bal_col:
+            opening = _safe_float(row.get(op_bal_col, 0))
+        else:
+            if op_dr_col:
+                opening += _safe_float(row.get(op_dr_col, 0))
+            if op_cr_col:
+                opening -= _safe_float(row.get(op_cr_col, 0))
 
         group = str(row.get(group_col, "")).strip() if group_col else ""
         if group in ("nan", "None"):
@@ -238,53 +279,69 @@ def _parse_trial_balance(df_raw: pd.DataFrame, result: ParseResult):
         ))
 
 
-def _parse_ledger_sheet(df_raw: pd.DataFrame, result: ParseResult):
-    _parse_trial_balance(df_raw, result)
+# ── Ledger report (per-account statement) ────────────────────────────────────
 
-
-def _parse_stock_sheet(df_raw: pd.DataFrame, result: ParseResult):
-    header_row = 0
-    for i in range(min(10, len(df_raw))):
-        vals = [str(v).lower() for v in df_raw.iloc[i].values if str(v) not in ("nan", "None")]
-        if any(k in " ".join(vals) for k in ["item", "stock", "quantity", "rate", "value"]):
-            header_row = i
+def _parse_ledger(df_raw: pd.DataFrame, result: ParseResult):
+    """
+    A single-ledger statement has a header with the ledger name,
+    then transaction rows. We extract the transactions as vouchers.
+    """
+    # Try to get ledger name from first few rows
+    ledger_name = ""
+    for i in range(min(5, len(df_raw))):
+        vals = [str(v).strip() for v in df_raw.iloc[i].values if str(v) not in ("nan", "None", "")]
+        if vals and len(vals) == 1:
+            ledger_name = vals[0]
             break
+
+    _parse_daybook(df_raw, result)
+
+    # If no ledger name found from voucher rows, use what we guessed
+    if ledger_name and result.vouchers:
+        for v in result.vouchers:
+            if not v.party_ledger:
+                v.party_ledger = ledger_name
+
+
+# ── Stock Summary ─────────────────────────────────────────────────────────────
+
+def _parse_stock(df_raw: pd.DataFrame, result: ParseResult):
+    header_row = _find_header_row(df_raw, ["item", "stock", "quantity", "value"])
 
     df = df_raw.iloc[header_row:].reset_index(drop=True)
     df.columns = _normalize_col(df.iloc[0].values)
     df = df.iloc[1:].reset_index(drop=True)
     df = df.dropna(how="all")
 
-    name_col = df.columns[0] if len(df.columns) > 0 else None
-    if not name_col:
+    if df.empty:
         return
 
-    def find_col(keys):
-        for k in keys:
-            matches = [c for c in df.columns if k in c]
-            if matches:
-                return matches[0]
-        return None
+    cols = list(df.columns)
+    name_col  = cols[0]
+    unit_col  = _find_col(cols, "unit", "uom", "measure")
+    oq_col    = _find_col(cols, "opening_qty", "op_qty", "opening_quantity", "opening__qty")
+    ov_col    = _find_col(cols, "opening_value", "op_value", "opening_amount", "opening__value")
+    cq_col    = _find_col(cols, "closing_qty", "cl_qty", "closing_quantity", "closing__qty")
+    cv_col    = _find_col(cols, "closing_value", "cl_value", "closing_amount", "closing__value")
+    group_col = _find_col(cols, "group", "category", "parent")
+    hsn_col   = _find_col(cols, "hsn", "hsn_code")
 
-    unit_col = find_col(["unit", "uom", "measure"])
-    open_qty = find_col(["opening_qty", "op_qty", "opening_quantity"])
-    open_val = find_col(["opening_value", "op_value", "opening_amount"])
-    close_qty = find_col(["closing_qty", "cl_qty", "closing_quantity"])
-    close_val = find_col(["closing_value", "cl_value", "closing_amount"])
-    group_col = find_col(["group", "category", "parent"])
-    hsn_col = find_col(["hsn", "hsn_code"])
-
+    seen: set[str] = set()
     for row in df.to_dict("records"):
         name = str(row[name_col]).strip()
-        if not name or name.lower() in ("nan", "none", "total"):
+        if not name or name.lower() in ("nan", "none", "total", ""):
             continue
+        if name in seen:
+            continue
+        seen.add(name)
+
         result.stock_items.append(NStockItem(
             name=name,
             group_name=str(row.get(group_col, "")).strip() if group_col else "",
             unit=str(row.get(unit_col, "")).strip() if unit_col else "",
             hsn_code=str(row.get(hsn_col, "")).strip() if hsn_col else "",
-            opening_qty=_safe_float(row.get(open_qty, 0)) if open_qty else 0,
-            opening_value=_safe_float(row.get(open_val, 0)) if open_val else 0,
-            closing_qty=_safe_float(row.get(close_qty, 0)) if close_qty else 0,
-            closing_value=_safe_float(row.get(close_val, 0)) if close_val else 0,
+            opening_qty=abs(_safe_float(row.get(oq_col, 0))) if oq_col else 0.0,
+            opening_value=abs(_safe_float(row.get(ov_col, 0))) if ov_col else 0.0,
+            closing_qty=abs(_safe_float(row.get(cq_col, 0))) if cq_col else 0.0,
+            closing_value=abs(_safe_float(row.get(cv_col, 0))) if cv_col else 0.0,
         ))

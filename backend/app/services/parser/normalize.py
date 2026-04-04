@@ -20,6 +20,10 @@ class NLedger:
     address: str = ""
     is_bank: bool = False
     is_cash: bool = False
+    is_revenue: bool = False
+    is_expense: bool = False
+    is_asset: bool = False
+    is_liability: bool = False
     tally_id: str = ""
 
 

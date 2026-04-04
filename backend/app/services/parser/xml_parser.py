@@ -1,20 +1,16 @@
 """
-Tally XML parser — handles the standard Tally Prime / Tally ERP 9 export format.
-Tally exports follow a structure like:
-  <ENVELOPE>
-    <HEADER>...</HEADER>
-    <BODY>
-      <IMPORTDATA>
-        <REQUESTDATA>
-          <TALLYMESSAGE>
-            <LEDGER NAME="...">...</LEDGER>
-            <VOUCHER>...</VOUCHER>
-            <STOCKITEM>...</STOCKITEM>
-          </TALLYMESSAGE>
-        </REQUESTDATA>
-      </IMPORTDATA>
-    </BODY>
-  </ENVELOPE>
+Tally XML parser — handles all common Tally Prime / Tally ERP 9 export formats:
+
+  Format 1 — TALLYMESSAGE (Sync / Data Exchange)
+    ENVELOPE > BODY > IMPORTDATA > REQUESTDATA > TALLYMESSAGE > LEDGER/VOUCHER/STOCKITEM
+
+  Format 2 — Day Book / Report XML
+    ENVELOPE > BODY > DATA > TALLYMESSAGE > VOUCHER
+
+  Format 3 — Collection XML (multiple COLLECTION nodes)
+    ENVELOPE > BODY > DATA > COLLECTION > LEDGER/VOUCHER/STOCKITEM
+
+Handles both Tally ERP 9 and Tally Prime tag naming differences.
 """
 from lxml import etree
 from datetime import date, datetime
@@ -26,10 +22,12 @@ BANK_GROUPS = {"bank accounts", "bank od accounts", "bank o/d accounts"}
 INCOME_GROUPS = {
     "sales accounts", "direct incomes", "indirect incomes",
     "income (direct)", "income (indirect)", "revenue",
+    "other incomes", "sales",
 }
 EXPENSE_GROUPS = {
     "purchase accounts", "direct expenses", "indirect expenses",
     "expense (direct)", "expense (indirect)", "manufacturing expenses",
+    "other expenses", "purchases",
 }
 ASSET_GROUPS = {
     "fixed assets", "current assets", "investments",
@@ -44,23 +42,52 @@ LIABILITY_GROUPS = {
 }
 
 
-def _text(el, tag: str, default: str = "") -> str:
-    child = el.find(tag)
-    return (child.text or "").strip() if child is not None else default
+def _text(el, *tags, default: str = "") -> str:
+    """Try multiple tag names and return the first non-empty value."""
+    for tag in tags:
+        child = el.find(tag)
+        if child is not None and child.text:
+            return child.text.strip()
+    return default
 
 
-def _amount(el, tag: str) -> float:
-    val = _text(el, tag, "0")
-    val = val.replace(",", "").replace(" Cr", "").replace(" Dr", "").strip()
+def _attr(el, *attrs, default: str = "") -> str:
+    for attr in attrs:
+        v = el.get(attr, "")
+        if v:
+            return v.strip()
+    return default
+
+
+def _parse_amount(val: str) -> float:
+    """Parse Tally amount strings like '1,23,456.78 Dr' or '-5000.00 Cr'."""
+    if not val:
+        return 0.0
+    val = val.replace(",", "").strip()
+    negative = False
+    if val.endswith(" Cr"):
+        negative = True
+        val = val[:-3].strip()
+    elif val.endswith(" Dr"):
+        val = val[:-3].strip()
     try:
-        return float(val) if val else 0.0
+        result = float(val)
+        return -result if negative else result
     except ValueError:
         return 0.0
 
 
+def _amount(el, *tags) -> float:
+    for tag in tags:
+        child = el.find(tag)
+        if child is not None and child.text:
+            return _parse_amount(child.text)
+    return 0.0
+
+
 def _tally_date(s: str) -> date | None:
     s = (s or "").strip()
-    for fmt in ("%Y%m%d", "%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d"):
+    for fmt in ("%Y%m%d", "%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%b-%Y"):
         try:
             return datetime.strptime(s, fmt).date()
         except ValueError:
@@ -73,167 +100,203 @@ def _classify_ledger(group: str) -> dict:
     return {
         "is_cash": g in CASH_GROUPS,
         "is_bank": g in BANK_GROUPS,
-        "is_revenue": any(g.startswith(x) or g == x for x in INCOME_GROUPS),
-        "is_expense": any(g.startswith(x) or g == x for x in EXPENSE_GROUPS),
-        "is_asset": any(g.startswith(x) or g == x for x in ASSET_GROUPS),
-        "is_liability": any(g.startswith(x) or g == x for x in LIABILITY_GROUPS),
+        "is_revenue": any(g == x or g.startswith(x) for x in INCOME_GROUPS),
+        "is_expense": any(g == x or g.startswith(x) for x in EXPENSE_GROUPS),
+        "is_asset": any(g == x or g.startswith(x) for x in ASSET_GROUPS),
+        "is_liability": any(g == x or g.startswith(x) for x in LIABILITY_GROUPS),
     }
+
+
+def _parse_ledger_element(led_el) -> NLedger | None:
+    name = _attr(led_el, "NAME") or _text(led_el, "NAME", "LEDGERNAME")
+    if not name:
+        return None
+    group = _text(led_el, "PARENT", "GROUP", "LEDGERGROUP")
+
+    ob_raw = _text(led_el, "OPENINGBALANCE", default="0")
+    cb_raw = _text(led_el, "CLOSINGBALANCE", default="0")
+    opening = _parse_amount(ob_raw)
+    closing = _parse_amount(cb_raw)
+
+    cl = _classify_ledger(group)
+    return NLedger(
+        name=name,
+        group_name=group,
+        opening_balance=opening,
+        closing_balance=closing,
+        gstin=_text(led_el, "GSTREGISTRATIONNUMBER", "GSTIN"),
+        pan=_text(led_el, "INCOMETAXNUMBER", "PAN"),
+        address=_text(led_el, "ADDRESS"),
+        tally_id=_attr(led_el, "GUID"),
+        **cl,
+    )
+
+
+def _parse_stock_element(si_el) -> NStockItem | None:
+    name = _attr(si_el, "NAME") or _text(si_el, "NAME", "STOCKITEMNAME")
+    if not name:
+        return None
+    return NStockItem(
+        name=name,
+        group_name=_text(si_el, "PARENT", "GROUP"),
+        unit=_text(si_el, "BASEUNITS", "UNITS"),
+        hsn_code=_text(si_el, "HSNCODE") or _text(si_el, "HSNDETAILS.LIST.HSNCODE"),
+        gst_rate=_amount(si_el, "GSTRATE"),
+        opening_qty=abs(_amount(si_el, "OPENINGBALANCE")),
+        opening_value=abs(_amount(si_el, "OPENINGVALUE")),
+        closing_qty=abs(_amount(si_el, "CLOSINGBALANCE")),
+        closing_value=abs(_amount(si_el, "CLOSINGVALUE")),
+    )
+
+
+def _parse_voucher_element(vch_el) -> NVoucher | None:
+    # Voucher type — try attribute first (ERP9), then element (Prime)
+    vtype = (
+        _attr(vch_el, "VCHTYPE")
+        or _text(vch_el, "VOUCHERTYPENAME", "VCHTYPE", "VTYPE")
+    )
+    if not vtype:
+        return None
+
+    date_str = _text(vch_el, "DATE", "VOUCHERDATE", "DSPVCHDATE")
+    vdate = _tally_date(date_str)
+    if not vdate:
+        return None
+
+    # Ledger entry lines — Tally uses several list tag names
+    lines: list[NVoucherLine] = []
+    amount = 0.0
+    for list_tag in ("ALLLEDGERENTRIES.LIST", "LEDGERENTRIES.LIST",
+                     "LEDGERENTRY.LIST", "ALLLEDGERENTRY.LIST"):
+        for le in vch_el.findall(list_tag):
+            lname = _text(le, "LEDGERNAME")
+            if not lname:
+                continue
+            raw_amt = _amount(le, "AMOUNT")
+            is_debit = raw_amt >= 0  # positive = debit in Tally's convention
+            line_amt = abs(raw_amt)
+            gst_type = _text(le, "GSTLEDGERTYPE", "TAXTYPE", "GSTCLASS")
+            gst_rate = _amount(le, "GSTRATE")
+            lines.append(NVoucherLine(
+                ledger_name=lname,
+                amount=line_amt,
+                is_debit=is_debit,
+                gst_type=gst_type,
+                gst_rate=gst_rate,
+            ))
+            if is_debit:
+                amount += line_amt
+
+    # Fallback: use AMOUNT tag on voucher itself
+    if amount == 0:
+        amount = abs(_amount(vch_el, "AMOUNT"))
+
+    # Stock / inventory lines
+    stock_lines: list[NStockLine] = []
+    for list_tag in ("INVENTORYENTRIES.LIST", "ALLINVENTORYENTRIES.LIST",
+                     "INVENTORYENTRY.LIST"):
+        for sl in vch_el.findall(list_tag):
+            iname = _text(sl, "STOCKITEMNAME", "ITEMNAME")
+            if not iname:
+                continue
+            qty = abs(_amount(sl, "ACTUALQTY", "BILLEDQTY", "QTY"))
+            rate = abs(_amount(sl, "RATE"))
+            amt = abs(_amount(sl, "AMOUNT"))
+            if amt == 0:
+                amt = qty * rate
+            stock_lines.append(NStockLine(
+                item_name=iname,
+                qty=qty,
+                rate=rate,
+                amount=amt,
+                godown=_text(sl, "GODOWNNAME"),
+                is_inward=vtype.lower() in (
+                    "purchase", "receipt note", "stock journal",
+                    "credit note", "debit note",
+                ),
+            ))
+
+    return NVoucher(
+        voucher_type=vtype,
+        date=vdate,
+        amount=amount,
+        voucher_number=_text(vch_el, "VOUCHERNUMBER", "VCHNO"),
+        party_ledger=_text(vch_el, "PARTYLEDGERNAME", "PARTY"),
+        narration=_text(vch_el, "NARRATION", "DESCRIPTION"),
+        is_cancelled=_text(vch_el, "ISCANCELLED", default="No").lower() in ("yes", "true", "1"),
+        is_optional=_text(vch_el, "ISOPTIONAL", default="No").lower() in ("yes", "true", "1"),
+        posted_by=_text(vch_el, "ENTEREDBY", "POSTEDBY"),
+        altered_by=_text(vch_el, "LASTALTEREDBY"),
+        altered_date=_tally_date(_text(vch_el, "LASTALTEREDDATE")),
+        reference=_text(vch_el, "REFERENCE", "REFNO"),
+        gstin=_text(vch_el, "GSTREGISTRATIONNUMBER", "GSTIN"),
+        place_of_supply=_text(vch_el, "PLACEOFSUPPLY", "STATENAME"),
+        is_reverse_charge=_text(vch_el, "ISREVERSECHARGE", default="No").lower() in ("yes", "true"),
+        employee_name=_text(vch_el, "EMPLOYEENAME"),
+        lines=lines,
+        stock_lines=stock_lines,
+    )
 
 
 def parse_xml(file_path: str) -> ParseResult:
     result = ParseResult()
+
     try:
-        tree = etree.parse(file_path, etree.XMLParser(recover=True))
+        tree = etree.parse(file_path, etree.XMLParser(recover=True, huge_tree=True))
     except Exception as e:
         raise ValueError(f"XML parse error: {e}")
 
     root = tree.getroot()
 
-    # Try to extract company/period info
-    company_el = root.find(".//COMPANY")
-    if company_el is not None:
-        from_str = _text(company_el, "FROMDATE") or _text(company_el, "STARTINGFROM")
-        to_str = _text(company_el, "TODATE") or _text(company_el, "ENDINGAT")
-        result.period_from = _tally_date(from_str)
-        result.period_to = _tally_date(to_str)
+    # ── Period from COMPANY / HEADER ────────────────────────────────────────
+    for company_el in root.iter("COMPANY"):
+        from_str = _text(company_el, "FROMDATE", "STARTINGFROM")
+        to_str = _text(company_el, "TODATE", "ENDINGAT")
+        if from_str:
+            result.period_from = _tally_date(from_str)
+        if to_str:
+            result.period_to = _tally_date(to_str)
+        break
 
-    # --- LEDGERS ---
+    # Also try HEADER block (Tally Prime reports)
+    for header_el in root.iter("HEADER"):
+        from_str = _text(header_el, "FROMDATE")
+        to_str = _text(header_el, "TODATE")
+        if from_str and not result.period_from:
+            result.period_from = _tally_date(from_str)
+        if to_str and not result.period_to:
+            result.period_to = _tally_date(to_str)
+        break
+
+    # ── Ledgers ─────────────────────────────────────────────────────────────
+    seen_ledgers: set[str] = set()
     for led_el in root.iter("LEDGER"):
-        name = led_el.get("NAME", "").strip() or _text(led_el, "NAME")
-        if not name:
-            continue
-        group = _text(led_el, "PARENT") or _text(led_el, "GROUP")
-        opening = _amount(led_el, "OPENINGBALANCE")
-        closing = _amount(led_el, "CLOSINGBALANCE")
+        led = _parse_ledger_element(led_el)
+        if led and led.name not in seen_ledgers:
+            seen_ledgers.add(led.name)
+            result.ledgers.append(led)
 
-        # Tally uses Dr/Cr suffix for sign
-        ob_raw = _text(led_el, "OPENINGBALANCE", "0")
-        cb_raw = _text(led_el, "CLOSINGBALANCE", "0")
-        if "Dr" in ob_raw:
-            opening = abs(opening)
-        elif "Cr" in ob_raw:
-            opening = -abs(opening)
-        if "Dr" in cb_raw:
-            closing = abs(closing)
-        elif "Cr" in cb_raw:
-            closing = -abs(closing)
-
-        cl = _classify_ledger(group)
-        result.ledgers.append(NLedger(
-            name=name,
-            group_name=group,
-            opening_balance=opening,
-            closing_balance=closing,
-            gstin=_text(led_el, "GSTREGISTRATIONNUMBER"),
-            pan=_text(led_el, "INCOMETAXNUMBER"),
-            address=_text(led_el, "ADDRESS"),
-            tally_id=led_el.get("GUID", ""),
-            **cl,
-        ))
-
-    # --- STOCK ITEMS ---
+    # ── Stock Items ─────────────────────────────────────────────────────────
+    seen_stocks: set[str] = set()
     for si_el in root.iter("STOCKITEM"):
-        name = si_el.get("NAME", "").strip() or _text(si_el, "NAME")
-        if not name:
-            continue
-        result.stock_items.append(NStockItem(
-            name=name,
-            group_name=_text(si_el, "PARENT"),
-            unit=_text(si_el, "BASEUNITS"),
-            hsn_code=_text(si_el, "HSNDETAILS.LIST.HSNCODE") or _text(si_el, "HSNCODE"),
-            gst_rate=_amount(si_el, "GSTRATE"),
-            opening_qty=_amount(si_el, "OPENINGBALANCE"),
-            opening_value=_amount(si_el, "OPENINGVALUE"),
-            closing_qty=_amount(si_el, "CLOSINGBALANCE"),
-            closing_value=_amount(si_el, "CLOSINGVALUE"),
-        ))
+        si = _parse_stock_element(si_el)
+        if si and si.name not in seen_stocks:
+            seen_stocks.add(si.name)
+            result.stock_items.append(si)
 
-    # --- VOUCHERS ---
-    dates = []
+    # ── Vouchers ────────────────────────────────────────────────────────────
+    dates: list[date] = []
     for vch_el in root.iter("VOUCHER"):
-        vtype = vch_el.get("VCHTYPE", "").strip() or _text(vch_el, "VOUCHERTYPENAME")
-        if not vtype:
-            continue
+        vch = _parse_voucher_element(vch_el)
+        if vch:
+            result.vouchers.append(vch)
+            dates.append(vch.date)
 
-        date_str = _text(vch_el, "DATE") or _text(vch_el, "VOUCHERDATE")
-        vdate = _tally_date(date_str)
-        if not vdate:
-            continue
-
-        altered_date_str = _text(vch_el, "LASTALTEREDDATE")
-        altered_date = _tally_date(altered_date_str)
-
-        # Calculate total amount from ledger entries
-        amount = 0.0
-        lines = []
-        for le in vch_el.iter("ALLLEDGERENTRIES.LIST"):
-            lname = _text(le, "LEDGERNAME")
-            lamount = _amount(le, "AMOUNT")
-            is_debit = lamount > 0
-            gst_type = _text(le, "GSTLEDGERTYPE") or _text(le, "TAXTYPE")
-            gst_rate = _amount(le, "GSTRATE")
-            if lname:
-                lines.append(NVoucherLine(
-                    ledger_name=lname,
-                    amount=abs(lamount),
-                    is_debit=is_debit,
-                    gst_type=gst_type,
-                    gst_rate=gst_rate,
-                ))
-                if is_debit:
-                    amount += abs(lamount)
-
-        if amount == 0:
-            amount = abs(_amount(vch_el, "AMOUNT"))
-
-        # Stock lines
-        stock_lines = []
-        for sl in vch_el.iter("INVENTORYENTRIES.LIST"):
-            iname = _text(sl, "STOCKITEMNAME")
-            if iname:
-                qty = _amount(sl, "ACTUALQTY") or _amount(sl, "BILLEDQTY")
-                rate = _amount(sl, "RATE")
-                amt = _amount(sl, "AMOUNT")
-                if amt == 0:
-                    amt = qty * rate
-                stock_lines.append(NStockLine(
-                    item_name=iname,
-                    qty=abs(qty),
-                    rate=abs(rate),
-                    amount=abs(amt),
-                    godown=_text(sl, "GODOWNNAME"),
-                    is_inward=vtype.lower() in ("purchase", "receipt note", "stock journal"),
-                ))
-
-        cancelled_str = _text(vch_el, "ISCANCELLED", "No")
-        optional_str = _text(vch_el, "ISOPTIONAL", "No")
-
-        voucher = NVoucher(
-            voucher_type=vtype,
-            date=vdate,
-            amount=amount,
-            voucher_number=_text(vch_el, "VOUCHERNUMBER"),
-            party_ledger=_text(vch_el, "PARTYLEDGERNAME"),
-            narration=_text(vch_el, "NARRATION"),
-            is_cancelled=cancelled_str.lower() in ("yes", "true", "1"),
-            is_optional=optional_str.lower() in ("yes", "true", "1"),
-            posted_by=_text(vch_el, "ENTEREDBY") or _text(vch_el, "POSTEDBY"),
-            altered_by=_text(vch_el, "LASTALTEREDBY"),
-            altered_date=altered_date,
-            reference=_text(vch_el, "REFERENCE"),
-            gstin=_text(vch_el, "GSTREGISTRATIONNUMBER"),
-            place_of_supply=_text(vch_el, "PLACEOFSUPPLY") or _text(vch_el, "STATENAME"),
-            is_reverse_charge=_text(vch_el, "ISREVERSECHARGE", "No").lower() in ("yes", "true"),
-            employee_name=_text(vch_el, "EMPLOYEENAME"),
-            lines=lines,
-            stock_lines=stock_lines,
-        )
-        result.vouchers.append(voucher)
-        dates.append(vdate)
-
-    if dates and not result.period_from:
-        result.period_from = min(dates)
-    if dates and not result.period_to:
-        result.period_to = max(dates)
+    # Auto-detect period from voucher dates if not set
+    if dates:
+        if not result.period_from:
+            result.period_from = min(dates)
+        if not result.period_to:
+            result.period_to = max(dates)
 
     return result

@@ -324,6 +324,7 @@ def vouchers(
     date_from: str | None = None,
     date_to: str | None = None,
     min_amount: float | None = None,
+    max_amount: float | None = None,
     page: int = 1,
     page_size: int = 50,
     db: Session = Depends(get_db),
@@ -343,6 +344,8 @@ def vouchers(
         q = q.filter(Voucher.date <= datetime.strptime(date_to, "%Y-%m-%d").date())
     if min_amount:
         q = q.filter(Voucher.amount >= min_amount)
+    if max_amount:
+        q = q.filter(Voucher.amount <= max_amount)
     total = q.count()
     items = q.order_by(Voucher.date.desc()).offset((page - 1) * page_size).limit(page_size).all()
     return {
