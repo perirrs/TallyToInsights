@@ -15,6 +15,12 @@ node_modules/
 dist/
 .vite/
 
+# Build outputs (binaries/installers — distribute separately)
+dist-installer/
+backend-dist/
+backend/build/
+backend/dist/
+
 # OS
 .DS_Store
 Thumbs.db

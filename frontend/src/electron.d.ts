@@ -24,6 +24,9 @@ interface ElectronBridge {
 
   /** Application version string. */
   getVersion: () => Promise<string>;
+
+  /** Returns a pre-fetched desktop auth token from the main process (production fast-path). */
+  getDesktopToken: () => Promise<{ access_token: string; user_id: number; name: string; is_admin: boolean } | null>;
 }
 
 declare global {
