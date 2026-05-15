@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from './store/authStore'
 import api from './api/client'
 import Layout from './components/Layout/Layout'
@@ -112,8 +112,10 @@ export default function App() {
   // Show activation screen if not activated
   if (!activated) return <ActivationPage />
 
+  const Router = window.electron ? HashRouter : BrowserRouter
+
   return (
-    <BrowserRouter>
+    <Router>
       <Routes>
         {/* Login page only exists in browser mode — desktop never shows it */}
         {!window.electron && <Route path="/login" element={<LoginPage />} />}
@@ -147,6 +149,6 @@ export default function App() {
           <Route path="checks" element={<ChecksPage />} />
         </Route>
       </Routes>
-    </BrowserRouter>
+    </Router>
   )
 }
