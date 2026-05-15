@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+*.db
+*.db-journal
+uploads/
+.env
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Build outputs (binaries/installers — distribute separately)
+dist-installer/
+backend-dist/
+backend/build/
+backend/dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp

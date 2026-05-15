@@ -1,0 +1,171 @@
+"""
+Audit Engine — runs all 735 checks across 29 categories.
+Loads data from DB into DataFrames and dispatches to each module.
+"""
+from datetime import datetime
+import pandas as pd
+from sqlalchemy.orm import Session
+from app.database import SessionLocal
+from app.models.dump import DataDump
+from app.models.voucher import Voucher, VoucherLine
+from app.models.ledger import Ledger
+from app.models.stock import StockItem
+from app.models.audit_result import AuditResult
+from app.services.audit.base import CheckResult
+
+
+def _load_dataframes(dump_id: int, db: Session) -> dict:
+    """Load all relevant tables into pandas DataFrames."""
+
+    vouchers = db.query(Voucher).filter(Voucher.dump_id == dump_id).all()
+    df_v = pd.DataFrame([{
+        "id": v.id, "voucher_number": v.voucher_number, "voucher_type": v.voucher_type,
+        "date": v.date, "party_ledger": v.party_ledger, "narration": v.narration,
+        "amount": float(v.amount or 0), "is_cancelled": v.is_cancelled,
+        "posted_by": v.posted_by, "altered_by": v.altered_by, "altered_date": v.altered_date,
+        "reference": v.reference, "gstin": v.gstin, "place_of_supply": v.place_of_supply,
+        "is_reverse_charge": v.is_reverse_charge, "employee_name": v.employee_name,
+    } for v in vouchers]) if vouchers else pd.DataFrame()
+
+    # Filter out cancelled vouchers for most checks
+    if not df_v.empty and "is_cancelled" in df_v.columns:
+        df_v = df_v[~df_v["is_cancelled"]]
+
+    ledgers = db.query(Ledger).filter(Ledger.dump_id == dump_id).all()
+    df_l = pd.DataFrame([{
+        "id": l.id, "name": l.name, "group_name": l.group_name,
+        "opening_balance": float(l.opening_balance or 0),
+        "closing_balance": float(l.closing_balance or 0),
+        "is_cash": l.is_cash, "is_bank": l.is_bank,
+        "is_revenue": l.is_revenue, "is_expense": l.is_expense,
+        "is_asset": l.is_asset, "is_liability": l.is_liability,
+        "gstin": l.gstin, "pan": l.pan,
+    } for l in ledgers]) if ledgers else pd.DataFrame()
+
+    vlines = db.query(VoucherLine).filter(
+        VoucherLine.voucher_id.in_([v.id for v in vouchers[:5000]])  # cap for performance
+    ).all() if vouchers else []
+    df_vl = pd.DataFrame([{
+        "id": vl.id, "voucher_id": vl.voucher_id, "ledger_id": vl.ledger_id,
+        "ledger_name": vl.ledger_name, "amount": float(vl.amount or 0),
+        "is_debit": vl.is_debit, "gst_type": vl.gst_type, "gst_rate": float(vl.gst_rate or 0),
+    } for vl in vlines]) if vlines else pd.DataFrame()
+
+    stock_items = db.query(StockItem).filter(StockItem.dump_id == dump_id).all()
+    df_s = pd.DataFrame([{
+        "id": s.id, "name": s.name, "group_name": s.group_name,
+        "unit": s.unit, "hsn_code": s.hsn_code, "gst_rate": float(s.gst_rate or 0),
+        "opening_qty": float(s.opening_qty or 0), "opening_value": float(s.opening_value or 0),
+        "closing_qty": float(s.closing_qty or 0), "closing_value": float(s.closing_value or 0),
+    } for s in stock_items]) if stock_items else pd.DataFrame()
+
+    return {"df_v": df_v, "df_l": df_l, "df_vl": df_vl, "df_s": df_s}
+
+
+def run_audit(dump_id: int, check_ids: set[int] | None = None):
+    """Run audit checks for a dump. If check_ids is given, only save results for those IDs."""
+    db = SessionLocal()
+    try:
+        dump = db.query(DataDump).filter(DataDump.id == dump_id).first()
+        if not dump or dump.status not in ("processed", "auditing"):
+            return
+
+        # Clear previous audit results (or only selected checks if filtering)
+        if check_ids:
+            from sqlalchemy import text as _text
+            for cid in check_ids:
+                db.execute(_text("DELETE FROM audit_results WHERE dump_id = :did AND check_id = :cid"),
+                           {"did": dump_id, "cid": cid})
+        else:
+            db.query(AuditResult).filter(AuditResult.dump_id == dump_id).delete()
+        db.commit()
+
+        data = _load_dataframes(dump_id, db)
+        all_results: list[CheckResult] = []
+
+        modules = [
+            ("financial_integrity", "app.services.audit.checks.financial_integrity"),
+            ("cash_bank", "app.services.audit.checks.cash_bank"),
+            ("accounts_payable", "app.services.audit.checks.accounts_payable"),
+            ("accounts_receivable", "app.services.audit.checks.accounts_receivable"),
+            ("statutory_tax", "app.services.audit.checks.statutory_tax"),
+            ("payroll_hr", "app.services.audit.checks.payroll_hr"),
+            ("fixed_assets", "app.services.audit.checks.fixed_assets"),
+            ("inventory_stock", "app.services.audit.checks.inventory_stock"),
+            ("gst_forensics", "app.services.audit.checks.gst_forensics"),
+            ("benfords_law", "app.services.audit.checks.benfords_law"),
+            ("ratio_analysis", "app.services.audit.checks.ratio_analysis"),
+            ("fraud_indicators", "app.services.audit.checks.fraud_indicators"),
+            ("data_quality", "app.services.audit.checks.data_quality"),
+            ("related_party", "app.services.audit.checks.related_party"),
+            ("temporal_patterns", "app.services.audit.checks.temporal_patterns"),
+            ("user_it_audit", "app.services.audit.checks.user_it_audit"),
+            # New checks 301-735 (29 categories total)
+            ("intra_period_variance", "app.services.audit.checks.intra_period_variance"),
+            ("inter_period_trend", "app.services.audit.checks.inter_period_trend"),
+            ("pl_analysis", "app.services.audit.checks.pl_analysis"),
+            ("balance_sheet_analysis", "app.services.audit.checks.balance_sheet_analysis"),
+            ("cost_centre", "app.services.audit.checks.cost_centre"),
+            ("revenue_leakage", "app.services.audit.checks.revenue_leakage"),
+            ("procurement_contract", "app.services.audit.checks.procurement_contract"),
+            ("treasury_working_capital", "app.services.audit.checks.treasury_working_capital"),
+            ("advanced_forensic", "app.services.audit.checks.advanced_forensic"),
+            ("income_tax_deferred", "app.services.audit.checks.income_tax_deferred"),
+            ("consolidation_group", "app.services.audit.checks.consolidation_group"),
+            ("expense_deepdive", "app.services.audit.checks.expense_deepdive"),
+            ("indian_regulatory", "app.services.audit.checks.indian_regulatory"),
+        ]
+
+        for module_name, module_path in modules:
+            try:
+                import importlib
+                mod = importlib.import_module(module_path)
+                results: list[CheckResult] = mod.run(**data)
+                all_results.extend(results)
+            except Exception as e:
+                # Don't let one module failure break the rest
+                print(f"Audit module {module_name} failed: {e}")
+
+        # Filter to selected check IDs if provided
+        if check_ids:
+            all_results = [r for r in all_results if r.check_id in check_ids]
+
+        # Persist results
+        now = datetime.utcnow()
+        db_results = [
+            AuditResult(
+                dump_id=dump_id,
+                check_id=r.check_id,
+                check_description=r.description,
+                category=r.category,
+                risk_level=r.risk_level,
+                status=r.status,
+                finding_count=r.finding_count,
+                findings=[f.to_dict() for f in r.findings],
+                amount_at_risk=r.amount_at_risk,
+                run_at=now,
+            )
+            for r in all_results
+        ]
+
+        BATCH = 100
+        for i in range(0, len(db_results), BATCH):
+            db.add_all(db_results[i:i + BATCH])
+            db.flush()
+
+        dump.status = "processed"
+        db.commit()
+
+    except Exception as e:
+        db.rollback()
+        # Restore status so the dump isn't stuck in "auditing"
+        try:
+            dump2 = db.query(DataDump).filter(DataDump.id == dump_id).first()
+            if dump2 and dump2.status == "auditing":
+                dump2.status = "processed"
+                db.commit()
+        except Exception:
+            pass
+        raise
+    finally:
+        db.close()
